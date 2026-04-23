@@ -2,16 +2,28 @@ package com.guardianeye.iiot.service;
 
 import com.guardianeye.iiot.model.Agent;
 import com.guardianeye.iiot.model.GameConstants;
+import com.guardianeye.iiot.model.GameState;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.Set;
+import java.util.List;
+import java.util.Optional;
+import com.guardianeye.iiot.model.AgentRepository;
 
 @Service
 @Slf4j
 public class RuleEngine {
+
+    // AgentRepository用于查询Agent信息，支持秩序之剑持有者查询
+    private final AgentRepository agentRepository;
+    
+    // 构造函数注入AgentRepository
+    public RuleEngine(AgentRepository agentRepository) {
+        this.agentRepository = agentRepository;
+    }
 
     @Data
     @AllArgsConstructor
@@ -169,5 +181,35 @@ public class RuleEngine {
         agent.setStamina(agent.getStamina() - cost);
         return new ActionResult(true,
                 "与 " + (target != null ? target : "未知") + " 交易，消耗耐力 " + cost, null, null);
+    }
+    
+    /**
+     * 检查Agent是否持有秩序之剑
+     * @param agent 待检查的Agent
+     * @param gameState 当前游戏状态
+     * @return true表示持有秩序之剑，false表示未持有
+     */
+    public boolean hasOrderSword(Agent agent, GameState gameState) {
+        // 如果游戏状态中没有持有者ID，返回false
+        if (gameState.getOrderSwordHolderId() == null) {
+            return false;
+        }
+        // 比较Agent的ID与持有者ID是否匹配
+        return gameState.getOrderSwordHolderId().equals(agent.getId());
+    }
+    
+    /**
+     * 获取秩序之剑持有者Agent
+     * @param gameState 当前游戏状态
+     * @return 持有者Agent，如果无持有者则返回null
+     */
+    private Agent getOrderSwordHolder(GameState gameState) {
+        // 如果没有持有者ID，返回null
+        if (gameState.getOrderSwordHolderId() == null) {
+            return null;
+        }
+        // 通过Repository查询持有者Agent
+        Optional<Agent> holder = agentRepository.findById(gameState.getOrderSwordHolderId());
+        return holder.orElse(null);
     }
 }

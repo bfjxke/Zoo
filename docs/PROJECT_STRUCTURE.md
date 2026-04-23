@@ -267,9 +267,11 @@ frontend/
 
 ```
 docs/
-├── rules.md                   # 游戏规则白皮书 ★重要
-├── PROJECT_STRUCTURE.md       # 本文档
-└── FEATURE_MEMO.md            # 功能备忘录（待实现功能）
+├── rules.md                   # 游戏规则白皮书 ★核心规则文档
+├── PROJECT_STRUCTURE.md       # 项目结构说明（本文件）
+├── FEATURE_MEMO.md            # 功能备忘录（待实现功能）
+├── CHANGELOG.md               # 改动日志（版本记录）
+└── map.md                     # 地图可视化 ★直观展示
 ```
 
 **rules.md** - 游戏规则白皮书
@@ -293,7 +295,9 @@ docs/
 | 文档 | 内容 | 重要性 |
 |------|------|--------|
 | rules.md | 游戏所有规则、数值、计算公式的详细说明 | ★★★★★ |
+| CHANGELOG.md | 版本改动记录、代码改动清单 | ★★★★★ |
 | PROJECT_STRUCTURE.md | 目录结构、技术选型、数据流图 | ★★★★ |
+| map.md | ASCII地图可视化，直观展示 | ★★★★ |
 | FEATURE_MEMO.md | 用户提出的点子、待实现功能、下一步计划 | ★★★ |
 
 ---

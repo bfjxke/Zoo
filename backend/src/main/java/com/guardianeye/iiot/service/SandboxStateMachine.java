@@ -8,6 +8,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Random;
 
 @Service
 @RequiredArgsConstructor
@@ -19,6 +20,7 @@ public class SandboxStateMachine {
     private final GameStateRepository gameStateRepository;
     private final RuleEngine ruleEngine;
     private final PythonDispatcher pythonDispatcher;
+    private final VoteRepository voteRepository;
 
     @Transactional
     public GameState getOrCreateGameState() {
@@ -53,6 +55,9 @@ public class SandboxStateMachine {
         }
         agentRepository.saveAll(aliveAgents);
 
+        // 阶段1.5: 检查秩序之剑生成（第40回合）
+        checkOrderSwordSpawn(gameState);
+
         // 阶段2: 死亡Agent复活倒计时
         List<Agent> deadAgents = agentRepository.findAll().stream()
                 .filter(a -> !a.getAlive())
@@ -61,6 +66,9 @@ public class SandboxStateMachine {
             processRespawn(agent, tick);
         }
         agentRepository.saveAll(deadAgents);
+
+        // 阶段2.5: 检查和平结局
+        checkPeaceEnding(gameState);
 
         // 阶段3: 调度Python获取Agent决策
         List<Agent> currentAlive = agentRepository.findByAliveTrue();
@@ -80,26 +88,46 @@ public class SandboxStateMachine {
 
     private void applyPassiveConsumption(Agent agent, int tick) {
         double staminaCost = GameConstants.STAMINA_BASE_COST;
-        double satietyCost = GameConstants.SATIETY_BASE_COST;
 
         agent.applyFatigueMultiplier();
 
+        // 只有疲劳状态会增加饱食消耗，饥饿状态不再增加饱食消耗
         if (agent.isFatigued()) {
             staminaCost *= GameConstants.PENALTY_MULTIPLIER;
-            satietyCost *= GameConstants.PENALTY_MULTIPLIER;
         }
+        // 饥饿只影响耐力消耗和扣血，不影响饱食消耗
         if (agent.isHungry()) {
             staminaCost *= GameConstants.PENALTY_MULTIPLIER;
-            satietyCost *= GameConstants.PENALTY_MULTIPLIER;
         }
 
         agent.setStamina(Math.max(0, (int)(agent.getStamina() - staminaCost)));
-        agent.setSatiety(Math.max(0, (int)(agent.getSatiety() - satietyCost)));
+        agent.setSatiety(Math.max(0, (int)(agent.getSatiety() - GameConstants.SATIETY_BASE_COST)));
 
+        // 饥饿扣血从5提高到20
         if (agent.isHungry()) {
             agent.setHealth(Math.max(0, agent.getHealth() - GameConstants.HEALTH_HUNGER_DAMAGE));
             logAction(tick, agent.getName(), agent.getFaction(), "HUNGER_DAMAGE",
                     "饥饿扣血 -" + GameConstants.HEALTH_HUNGER_DAMAGE, null, null);
+        }
+
+        // 新增功能：饱食回血机制
+        int healthRegen = 0;
+        if (agent.getSatiety() > GameConstants.SATIETY_BUFF_THRESHOLD) {
+            // 饱食>100：回血10点
+            healthRegen = GameConstants.HEALTH_REGEN_BUFF;
+            logAction(tick, agent.getName(), agent.getFaction(), "HEALTH_REGEN",
+                    "饱餐Buff回血 +" + healthRegen, null, null);
+        } else if (agent.getSatiety() > GameConstants.HEALTH_REGEN_SATIETY_THRESHOLD) {
+            // 饱食>30：回血5点
+            healthRegen = GameConstants.HEALTH_REGEN_NORMAL;
+            logAction(tick, agent.getName(), agent.getFaction(), "HEALTH_REGEN",
+                    "饱食回血 +" + healthRegen, null, null);
+        }
+
+        if (healthRegen > 0) {
+            int oldHealth = agent.getHealth();
+            agent.setHealth(Math.min(GameConstants.HEALTH_MAX, agent.getHealth() + healthRegen));
+            log.debug("健康 {} -> {}", oldHealth, agent.getHealth());
         }
 
         if (agent.isDead()) {
@@ -136,6 +164,144 @@ public class SandboxStateMachine {
                     "复活！状态重置为50%，位置: " + baseNode, null, null);
         }
     }
+    
+    /**
+     * 检查并生成秩序之剑（第40回合时在随机位置生成）
+     * @param gameState 当前游戏状态
+     */
+    private void checkOrderSwordSpawn(GameState gameState) {
+        // 如果剑还未生成且当前回合>=40，则生成剑
+        if (!gameState.getOrderSwordSpawned() && gameState.getCurrentTick() >= 40) {
+            // 随机选择中心或野外节点作为生成位置
+            List<String> spawnNodes = List.of("center", "forest", "river", "mountain");
+            String spawnNode = spawnNodes.get(new Random().nextInt(spawnNodes.size()));
+            // 设置剑的位置为随机选择的节点
+            gameState.setOrderSwordLocation(spawnNode);
+            // 标记剑已生成
+            gameState.setOrderSwordSpawned(true);
+            log.info("[秩序之剑] 在 {} 生成！", spawnNode);
+        }
+    }
+    
+    /**
+     * 检查Agent是否拾取了秩序之剑
+     * @param agent 待检查的Agent
+     * @param gameState 当前游戏状态
+     */
+    private void checkOrderSwordPickup(Agent agent, GameState gameState) {
+        // 只有在剑已生成且无持有者时才能拾取
+        if (gameState.getOrderSwordSpawned() && 
+            gameState.getOrderSwordHolderId() == null &&
+            gameState.getOrderSwordLocation().equals(agent.getCurrentNode())) {
+            // Agent拾取了秩序之剑
+            gameState.setOrderSwordHolderId(agent.getId());
+            log.info("[秩序之剑] {} 拾取了秩序之剑！", agent.getName());
+        }
+    }
+
+    /**
+     * 检查是否触发和平结局
+     * 条件：
+     * 1. 游戏进行 >= 40回合
+     * 2. 所有阵营都有Agent存活
+     * 3. 守序阵营持有秩序之剑
+     * 4. 守序阵营发布秩序宣言
+     * 5. 激进阵营过半数同意
+     * @param gameState 当前游戏状态
+     */
+    private void checkPeaceEnding(GameState gameState) {
+        // 条件1: >= 40回合
+        if (gameState.getCurrentTick() < 40) return;
+        
+        // 条件2: 所有阵营存活
+        List<Agent> allAgents = agentRepository.findAll();
+        boolean lawfulAlive = allAgents.stream().anyMatch(a -> "lawful".equals(a.getFaction()) && a.getAlive());
+        boolean aggressiveAlive = allAgents.stream().anyMatch(a -> "aggressive".equals(a.getFaction()) && a.getAlive());
+        boolean neutralAlive = allAgents.stream().anyMatch(a -> "neutral".equals(a.getFaction()) && a.getAlive());
+        if (!lawfulAlive || !aggressiveAlive || !neutralAlive) return;
+        
+        // 条件3: 守序持有秩序之剑
+        if (gameState.getOrderSwordHolderId() == null) return;
+        
+        // 条件4: 宣言已发布
+        if (!gameState.getOrderDeclarationActive()) return;
+        
+        // 条件5: 激进过半数同意
+        List<Vote> votes = voteRepository.findByDeclarationTick(gameState.getLastDeclarationTick());
+        if (votes.isEmpty()) return;
+        
+        long agreeCount = votes.stream().filter(Vote::getVoteResult).count();
+        long totalCount = votes.size();
+        double agreeRate = (double) agreeCount / totalCount;
+        
+        // 需要超过50%同意
+        if (agreeRate <= 0.5) return;
+        
+        // 触发和平结局！
+        log.info("========== [和平结局] 守序阵营胜利！激进阵营 {}% 同意 ==========", (int)(agreeRate * 100));
+        gameState.setRunning(false);
+    }
+
+    /**
+     * 发布秩序宣言
+     * @param agentId 发布者Agent ID
+     */
+    @Transactional
+    public void publishOrderDeclaration(Long agentId) {
+        GameState gs = getOrCreateGameState();
+        Agent agent = agentRepository.findById(agentId)
+                .orElseThrow(() -> new RuntimeException("Agent不存在: " + agentId));
+        
+        // 检查冷却
+        if (gs.getCurrentTick() - gs.getLastDeclarationTick() < gs.getDeclarationCooldown()) {
+            throw new RuntimeException("宣言冷却中，还需 " + 
+                (gs.getDeclarationCooldown() - (gs.getCurrentTick() - gs.getLastDeclarationTick())) + " 回合");
+        }
+        
+        // 检查守序阵营+持有剑
+        if (!"lawful".equals(agent.getFaction())) {
+            throw new RuntimeException("只有守序阵营可以发布秩序宣言");
+        }
+        if (!gs.getOrderSwordHolderId().equals(agentId)) {
+            throw new RuntimeException("需要持有秩序之剑才能发布宣言");
+        }
+        
+        gs.setOrderDeclarationActive(true);
+        gs.setLastDeclarationTick(gs.getCurrentTick());
+        gameStateRepository.save(gs);
+        log.info("[秩序宣言] {} 发布了秩序宣言！", agent.getName());
+    }
+
+    /**
+     * 投票
+     * @param agentId 投票者Agent ID
+     * @param agree 是否同意
+     */
+    @Transactional
+    public void castVote(Long agentId, boolean agree) {
+        GameState gs = getOrCreateGameState();
+        Agent agent = agentRepository.findById(agentId)
+                .orElseThrow(() -> new RuntimeException("Agent不存在: " + agentId));
+        
+        // 检查是否在宣言期间
+        if (!gs.getOrderDeclarationActive()) {
+            throw new RuntimeException("当前没有激活的宣言");
+        }
+        
+        // 激进阵营才能投票
+        if (!"aggressive".equals(agent.getFaction())) {
+            throw new RuntimeException("只有激进阵营可以投票");
+        }
+        
+        Vote vote = new Vote();
+        vote.setTickNumber(gs.getCurrentTick());
+        vote.setAgentName(agent.getName());
+        vote.setDeclarationTick(gs.getLastDeclarationTick());
+        vote.setVoteResult(agree);
+        voteRepository.save(vote);
+        
+        log.info("[投票] {} 投票: {}", agent.getName(), agree ? "同意" : "拒绝");
+    }
 
     @Transactional
     public Agent executeAction(Long agentId, String action, String target) {
@@ -152,6 +318,16 @@ public class SandboxStateMachine {
         RuleEngine.ActionResult result = ruleEngine.validateAndExecute(agent, action, target);
 
         if (result.isSuccess()) {
+            // 移动后秩序之剑跟随持有者
+            if ("move".equals(action) && gs.getOrderSwordHolderId() != null && 
+                gs.getOrderSwordHolderId().equals(agent.getId())) {
+                gs.setOrderSwordLocation(target);
+                log.info("[秩序之剑] {} 携带剑移动到 {}", agent.getName(), target);
+            }
+            
+            // 检查秩序之剑拾取
+            checkOrderSwordPickup(agent, gs);
+            
             agentRepository.save(agent);
         }
 

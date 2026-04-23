@@ -10,11 +10,6 @@ import java.util.Set;
  *
  * 本文件定义了游戏的所有核心规则数值，是整个系统的"规则宪法"。
  * 所有其他代码在执行游戏逻辑时，都必须参照这里的常量。
- *
- * 为什么单独成立一个常量类？
- * - 集中管理：所有规则数值在一处，便于查看和修改
- * - 避免魔数：不在代码中写死数字，用常量名代替
- * - 易于调整：通过修改常量即可平衡游戏，无需改代码
  */
 public final class GameConstants {
 
@@ -36,6 +31,22 @@ public final class GameConstants {
      */
     public static final int TICK_INTERVAL_SECONDS = 30;
 
+    /**
+     * 最大游戏回合数：50回合
+     *
+     * 当游戏达到50回合时触发"永无止境结局"
+     * 50回合约等于25分钟的游戏时长
+     */
+    public static final int MAX_GAME_TICKS = 50;
+
+    /**
+     * 秩序之剑生成回合：40回合
+     *
+     * 游戏进行到40回合时，秩序之剑会在随机位置生成
+     * 给各阵营20回合（10分钟）的时间来争夺
+     */
+    public static final int ORDER_SWORD_SPAWN_TICK = 40;
+
     // ========================================================================
     // 第二部分：Agent基础属性
     // ========================================================================
@@ -53,10 +64,21 @@ public final class GameConstants {
     public static final int SATIETY_INITIAL = 100;
 
     /**
-     * Agent初始健康值：100点
+     * Agent初始健康值：90点
+     *
+     * 设计理念：
+     * - 相比原来的100点，降低了10点
+     * - 配合饥饿扣血20点/回合的设计
+     * - 营造"容易死"的紧张氛围
+     * - 90点配合饥饿4.5回合死亡的节奏
+     */
+    public static final int HEALTH_INITIAL = 90;
+
+    /**
+     * Agent生命值上限：90点
      * 健康(Health)代表Agent的生命，归零即死亡
      */
-    public static final int HEALTH_INITIAL = 100;
+    public static final int HEALTH_MAX = 90;
 
     /**
      * 饱食度上限（含Buff）：140点
@@ -64,8 +86,8 @@ public final class GameConstants {
      * 设计理念：
      * - 正常上限100点为"饱"
      * - 进食Buff可让饱食度超过100，最高到140
-     * - 超过100的部分代表"过度饱食"，提供耐力恢复加速
-     * - 40点的缓冲空间（超出100的40点）让玩家有囤积食物的动力
+     * - 超过100的部分代表"过度饱食"，提供耐力恢复加速和额外回血
+     * - 40点的缓冲空间让玩家有囤积食物的动力
      */
     public static final int SATIETY_MAX_WITH_BUFF = 140;
 
@@ -77,10 +99,10 @@ public final class GameConstants {
      * 基础耐力消耗：10点/回合
      *
      * 计算方式：每回合自动扣除10点耐力
-     * - 无Buff无惩罚时：100点耐力可支撑10回合（约5分钟）
-     * - 有疲劳惩罚时：消耗增加到15点，只能支撑约6.6回合
+     * - 无Buff无惩罚时：100点耐力可支撑10回合
+     * - 有疲劳惩罚时：消耗增加到15点
      *
-     * 这个消耗确保游戏不会无限进行，强制Agent需要管理资源
+     * 这个消耗确保游戏不会无限进行
      */
     public static final int STAMINA_BASE_COST = 10;
 
@@ -88,9 +110,6 @@ public final class GameConstants {
      * 移动耐力消耗：15点/次
      *
      * 比基础消耗多50%，模拟"移动比站着更累"
-     * - 正常状态：移动一次消耗15点
-     * - 有疲劳惩罚（×1.5）：移动一次消耗22.5点（实际扣23）
-     * - 有Buff（×0.7）：移动一次消耗10.5点（实际扣11）
      */
     public static final int STAMINA_MOVE_COST = 15;
 
@@ -99,12 +118,10 @@ public final class GameConstants {
      *
      * 设计理念：
      * - 休息一次可恢复20点耐力
-     * - 但如果处于疲劳/饥饿状态，恢复效果会打折
-     * - 正常状态：恢复20点
-     * - 疲劳状态：恢复 20/1.5 ≈ 13点
-     * - 疲劳+饥饿：恢复 20/(1.5×1.5) ≈ 8点
+     * - 如果处于疲劳状态，恢复效果会打折
+     * - 如果有饱食Buff，恢复效果会加速
      *
-     * 这样设计让状态不好的Agent恢复变慢，增加生存压力
+     * 恢复公式：20 / 状态惩罚 / Buff加成
      */
     public static final int STAMINA_REST_RECOVER = 20;
 
@@ -112,37 +129,66 @@ public final class GameConstants {
      * 基础饱食度消耗：5点/回合
      *
      * 比耐力消耗慢，模拟"不运动就饿得慢"
-     * - 无惩罚时：100点饱食度可支撑20回合（约10分钟）
-     * - 有饥饿惩罚时：消耗增加到7.5点，只能支撑约13回合
+     * - 100点饱食度可支撑20回合
      *
-     * 注意：饥饿惩罚不仅增加消耗，还会扣健康！
+     
      */
     public static final int SATIETY_BASE_COST = 5;
 
     /**
      * 进食恢复饱食度：30点/次
      *
-     * 设计理念：
-     * - 一份食物恢复30点饱食度
-     * - 从0吃到100需要吃4份食物
-     * - 从100吃到140需要再吃2份食物
-     *
-     * 为什么是30点？因为它让"4份刚好吃饱"成为一个自然的目标
+     * 一份食物恢复30点饱食度
+     * 从0吃到100需要吃4份食物
+     * 从100吃到140需要再吃2份食物
      */
     public static final int SATIETY_EAT_RECOVER = 30;
 
+    // ========================================================================
+    // 第四部分：生命值系统
+    // ========================================================================
+
     /**
-     * 饥饿扣血：5点/回合
+     * 饥饿扣血：20点/回合
      *
-     * 当饱食度低于30时，每回合扣5点健康
+     * 当饱食度低于30时，每回合扣20点健康
+     *
+     * 设计理念：
+     * - 大幅提高饥饿惩罚，营造"容易死"的环境
+     * - 配合生命上限90的设计：饥饿状态下最多撑4.5回合
+     * - 相比原来的5点，提高了4倍
      *
      * 饥饿惩罚链：
-     * 饱食度耗尽 -> 每回合扣5健康 + 消耗增加50% -> 健康归零 -> 死亡
+     * 饱食度<30 -> 每回合扣20健康 -> 约4-5回合后死亡
      */
-    public static final int HEALTH_HUNGER_DAMAGE = 5;
+    public static final int HEALTH_HUNGER_DAMAGE = 20;
+
+    /**
+     * 饱食回血阈值：30点
+     *
+     * 当饱食度 > 30时，每回合回复健康
+     * 作用是给玩家一个"安全区"，只要不是太饿就能慢慢恢复
+     */
+    public static final int HEALTH_REGEN_SATIETY_THRESHOLD = 30;
+
+    /**
+     * 饱食回血量：5点/回合
+     *
+     * 当饱食度 > 30时，每回合回复5点健康
+     * 配合90点生命上限：约18回合可以从1血回满
+     */
+    public static final int HEALTH_REGEN_NORMAL = 5;
+
+    /**
+     * 饱食Buff回血量：10点/回合
+     *
+     * 当饱食度 > 100时，每回合回复10点健康
+     * 比普通回血快一倍，激励玩家囤积食物
+     */
+    public static final int HEALTH_REGEN_BUFF = 10;
 
     // ========================================================================
-    // 第四部分：状态阈值
+    // 第五部分：状态阈值
     // ========================================================================
 
     /**
@@ -151,8 +197,9 @@ public final class GameConstants {
      *
      * 疲劳状态效果：
      * - 耐力消耗增加50%（10点变成15点）
-     * - 饱食度消耗增加50%（5点变成7.5点）
      * - 休息恢复效果降低（20点变成13点）
+     *
+     * 饥饿状态不再影响饱食度消耗
      */
     public static final int FATIGUE_THRESHOLD = 20;
 
@@ -161,9 +208,8 @@ public final class GameConstants {
      * 当饱食度低于30时，Agent进入"饥饿状态"
      *
      * 饥饿状态效果：
+     * - 每回合扣20点健康
      * - 耐力消耗增加50%
-     * - 饱食度消耗增加50%
-     * - 每回合扣5点健康
      */
     public static final int HUNGER_THRESHOLD = 30;
 
@@ -171,20 +217,18 @@ public final class GameConstants {
      * 惩罚倍率：1.5倍
      *
      * 状态不好时，消耗增加的倍率
-     * 疲劳和饥饿的惩罚可以叠加（最高×2.25）
+     * 疲劳和饥饿的惩罚可以叠加
      */
     public static final double PENALTY_MULTIPLIER = 1.5;
 
     /**
-     * 饱食Buff恢复加速：0.7倍
+     * 饱食Buff恢复倍率：约0.588
      *
-     * 当饱食度 > 100时，耐力恢复速度×0.7（加快50%）
-     * 休息本应恢复20点，有Buff时恢复 20/0.7 ≈ 28点
-     *
-     * 为什么用0.7而不是1.5？
-     * 因为恢复是"除以倍率"，0.7意味着"加快到1.43倍"
+     * 当饱食度 > 100时，耐力恢复加速1.7倍
+     * 计算公式：恢复量 = 基础恢复 / 0.588 ≈ 基础恢复 × 1.7
+     * 例如：休息20点 / 0.588 ≈ 34点
      */
-    public static final double SATIETY_BUFF_RECOVERY_MULTIPLIER = 0.7;
+    public static final double SATIETY_BUFF_RECOVERY_MULTIPLIER = 0.588;
 
     /**
      * Buff触发阈值：100点
@@ -193,43 +237,35 @@ public final class GameConstants {
     public static final int SATIETY_BUFF_THRESHOLD = 100;
 
     // ========================================================================
-    // 第五部分：死亡与复活
+    // 第六部分：死亡与复活
     // ========================================================================
 
     /**
      * 复活所需回合数：3回合
      *
      * Agent死亡后需要等待3个回合才能复活
-     * 这段时间是"死亡冷却期"，对手有机会做其他事
      */
     public static final int RESPAWN_TICKS = 3;
 
     /**
      * 复活后属性保留：50%
      *
-     * 设计理念：
-     * - 死亡不是无代价的，需要付出50%属性作为惩罚
-     * - 复活后只有半管血，需要时间恢复
-     * - 防止"死亡=无代价"的博弈失衡
-     *
+     * 死亡不是无代价的，需要付出50%属性作为惩罚
      * 复活后：
      * - 耐力 = 100 × 50% = 50点
      * - 饱食度 = 100 × 50% = 50点
-     * - 健康 = 100 × 50% = 50点
-     * - 疲劳/饥饿状态清除
-     * - 强制回到阵营基地
+     * - 健康 = 90 × 50% = 45点
      */
     public static final int RESPAWN_STAT_PERCENT = 50;
 
     // ========================================================================
-    // 第六部分：自定义动作与AI判官
+    // 第七部分：AI判官系统
     // ========================================================================
 
     /**
      * 自定义动作耐力消耗：30点
      *
      * 当AI执行不在白名单中的动作时，需要消耗30点耐力
-     * 这是一个"尝试费"，防止AI胡乱尝试
      */
     public static final int CUSTOM_ACTION_COST = 30;
 
@@ -237,48 +273,47 @@ public final class GameConstants {
      * 默认成功率：60%
      *
      * 白名单外的动作需要AI判官裁决
-     * AI判官默认给60%的成功率
-     * 实际成功率由AI判官根据情境调整
      */
     public static final double DEFAULT_SUCCESS_RATE = 0.6;
 
     /**
-     * 自定义规则有效期：20回合
+     * 自定义规则有效期：8回合
      *
-     * AI判官批准的临时规则有效期为20回合
-     * 超过后需要重新申请
+     * 相比原来的20回合，缩短到8回合
+     * 快速变换规则，增加游戏趣味性
      */
-    public static final int CUSTOM_RULE_EXPIRE_TICKS = 20;
+    public static final int CUSTOM_RULE_EXPIRE_TICKS = 8;
 
     // ========================================================================
-    // 第七部分：白名单动作
+    // 第八部分：白名单动作
     // ========================================================================
 
     /**
      * 允许的动作白名单
      *
-     * 以下5个动作是"预设合法"的，不需要AI判官审批：
+     * 以下动作是"预设合法"的，不需要AI判官审批：
      * - move：移动到相邻节点
      * - eat：进食恢复饱食度
      * - rest：休息恢复耐力
      * - talk：在频道发言
      * - trade：与其他Agent交易
+     * - provoke：挑衅（v1.1新增）
      */
     public static final Set<String> ALLOWED_ACTIONS = Set.of(
-            "move", "eat", "rest", "talk", "trade"
+            "move", "eat", "rest", "talk", "trade", "provoke"
     );
 
     // ========================================================================
-    // 第八部分：地图节点
+    // 第九部分：地图节点
     // ========================================================================
 
     /**
      * 所有节点列表
      *
      * 地图共7个节点：
-     * - 3个阵营基地：base_lawful（守序）、base_aggressive（强势）、base_neutral（中立）
-     * - 1个中心节点：center（战略要冲）
-     * - 3个野外资源点：forest（森林）、river（河流）、mountain（山地）
+     * - 3个阵营基地：base_lawful、base_aggressive、base_neutral
+     * - 1个中心节点：center
+     * - 3个野外资源点：forest、river、mountain
      */
     public static final Set<String> ALL_NODES = Set.of(
             "base_lawful", "base_aggressive", "base_neutral",
@@ -286,17 +321,11 @@ public final class GameConstants {
     );
 
     /**
-     * 节点相邻关系
+     * 节点相邻关系（辐射状结构）
      *
-     * 设计理念：辐射状结构
-     * - 每个阵营基地只连接center和自己的野外
-     * - center连接所有6个其他节点
-     * - 野外节点只连接自己的阵营基地和center
-     *
-     * 这样设计的博弈效果：
-     * - 想去其他阵营，必须经过center（暴露风险）
-     * - center成为必争之地
-     * - 每个阵营有"后花园"（自己的野外）可以躲藏
+     * 每个阵营基地只连接center和自己的野外
+     * center连接所有6个其他节点
+     * 野外节点只连接自己的阵营基地和center
      */
     public static final Map<String, Set<String>> ADJACENT_NODES = Map.of(
             "base_lawful",   Set.of("center", "forest"),
@@ -310,9 +339,6 @@ public final class GameConstants {
 
     /**
      * 阵营对应的基地节点
-     *
-     * 每个阵营有且只有一个基地
-     * 复活、阵营私聊都必须在这里
      */
     public static final Map<String, String> FACTION_BASE = Map.of(
             "lawful",     "base_lawful",
@@ -321,23 +347,44 @@ public final class GameConstants {
     );
 
     // ========================================================================
-    // 第九部分：通讯频道
+    // 第十部分：通讯频道
     // ========================================================================
 
     /**
      * 可用的发言频道
      *
-     * 共有4个频道：
-     * - lawful_private：守序阵营内部频道
-     * - aggressive_private：强势阵营内部频道
-     * - neutral_private：中立阵营内部频道
-     * - public：公开频道（所有人可见）
-     *
      * 阵营私聊的限制：
-     * - 只能在阵营基地发言
+     * - 只能在阵营基地节点发言
      * - 只有同阵营成员能接收
      */
     public static final Set<String> FACTION_CHANNELS = Set.of(
             "lawful_private", "aggressive_private", "neutral_private", "public"
     );
+
+    // ========================================================================
+    // 第十一部分：和平结局系统
+    // ========================================================================
+
+    /**
+     * 和平结局触发最小回合数：40回合
+     *
+     * 和平结局需要游戏进行至少40回合
+     * 配合秩序之剑生成时间
+     */
+    public static final int PEACE_ENDING_MIN_TICKS = 40;
+
+    /**
+     * 守序阵营全员Buff：10%
+     *
+     * 当守序阵营持有秩序之剑时
+     * 所有守序阵营Agent获得10%的全属性加成
+     */
+    public static final double ORDER_FACTION_BUFF = 0.1;
+
+    /**
+     * 秩序宣言冷却：10回合
+     *
+     * 发布守序宣言后需要等待10回合才能再次发布
+     */
+    public static final int ORDER_DECLARATION_COOLDOWN = 10;
 }

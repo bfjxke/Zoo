@@ -2,10 +2,12 @@ package com.guardianeye.iiot;
 
 import com.guardianeye.iiot.model.Agent;
 import com.guardianeye.iiot.model.GameConstants;
+import com.guardianeye.iiot.model.AgentRepository;
 import com.guardianeye.iiot.service.RuleEngine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -16,7 +18,9 @@ class SandboxSimulationTest {
 
     @BeforeEach
     void setUp() {
-        ruleEngine = new RuleEngine();
+        // 创建模拟的AgentRepository用于测试
+        AgentRepository mockAgentRepository = Mockito.mock(AgentRepository.class);
+        ruleEngine = new RuleEngine(mockAgentRepository);
         testAgent = new Agent();
         testAgent.setId(1L);
         testAgent.setName("测试Agent");
@@ -199,7 +203,7 @@ class SandboxSimulationTest {
     }
 
     @Test
-    @DisplayName("饥饿扣血: 饱食<30时每Tick扣5健康")
+    @DisplayName("v1.1饥饿扣血: 饱食<30时每Tick扣20健康")
     void testHungerDamage() {
         testAgent.setSatiety(25);
         testAgent.setHealth(50);
@@ -208,11 +212,11 @@ class SandboxSimulationTest {
         if (testAgent.isHungry()) {
             testAgent.setHealth(Math.max(0, testAgent.getHealth() - GameConstants.HEALTH_HUNGER_DAMAGE));
         }
-        assertEquals(45, testAgent.getHealth());
+        assertEquals(30, testAgent.getHealth());
     }
 
     @Test
-    @DisplayName("死亡流程: 健康归零进入复活倒计时")
+    @DisplayName("v1.1死亡流程: 健康归零进入复活倒计时，复活后属性50%")
     void testDeathAndRespawn() {
         testAgent.setHealth(0);
         assertTrue(testAgent.isDead());
@@ -233,7 +237,7 @@ class SandboxSimulationTest {
         assertTrue(testAgent.getAlive());
         assertEquals(50, testAgent.getStamina());
         assertEquals(50, testAgent.getSatiety());
-        assertEquals(50, testAgent.getHealth());
+        assertEquals(45, testAgent.getHealth()); // v1.1: 90*50%=45
     }
 
     @Test

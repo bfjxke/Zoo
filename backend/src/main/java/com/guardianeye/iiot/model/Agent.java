@@ -19,7 +19,7 @@ public class Agent {
     private String faction;
 
     @Column(nullable = false)
-    private String role;
+    private String role = "soldier";  // leader/soldier/judge
 
     @Column(nullable = false)
     private Integer stamina = 100;
