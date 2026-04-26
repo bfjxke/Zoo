@@ -1,13 +1,4 @@
--- GuardianEye-IIoT 沙箱动物园 数据库初始化脚本
--- 使用前请确保 MySQL 8.0 已安装并运行
-
-CREATE DATABASE IF NOT EXISTS guardianeye_zoo
-    DEFAULT CHARACTER SET utf8mb4
-    DEFAULT COLLATE utf8mb4_unicode_ci;
-
-USE guardianeye_zoo;
-
--- 领袖价值观种子数据（20条）
+-- 领袖价值观种子数据（30条）
 INSERT INTO leader_values (value_type, description, faction) VALUES
 ('合作', '团结就是力量，合作是生存的基石', 'lawful'),
 ('秩序', '规则是保护弱者的盾牌', 'lawful'),

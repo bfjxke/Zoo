@@ -1,5 +1,6 @@
 package com.guardianeye.iiot.model;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -310,40 +311,45 @@ public final class GameConstants {
     /**
      * 所有节点列表
      *
-     * 地图共7个节点：
-     * - 3个阵营基地：base_lawful、base_aggressive、base_neutral
-     * - 1个中心节点：center
-     * - 3个野外资源点：forest、river、mountain
+     * 地图共8个节点：
+     * - 3个阵营基地：A（守序）、B（中立）、C（激进）
+     * - 2个广场：D、E
+     * - 3个野外资源点：F（森林）、G（河流）、H（山地）
      */
     public static final Set<String> ALL_NODES = Set.of(
-            "base_lawful", "base_aggressive", "base_neutral",
-            "center", "forest", "river", "mountain"
+            "A", "B", "C", "D", "E", "F", "G", "H"
     );
 
     /**
-     * 节点相邻关系（辐射状结构）
+     * 节点相邻关系（对称结构）
      *
-     * 每个阵营基地只连接center和自己的野外
-     * center连接所有6个其他节点
-     * 野外节点只连接自己的阵营基地和center
+     * A（守序）连接 D、F
+     * B（中立）连接 D、E、G
+     * C（激进）连接 E、H
+     * D（左广场）连接 A、B、E、F、G
+     * E（右广场）连接 B、C、D、G、H
+     * F（森林）连接 A、D
+     * G（河流）连接 B、D、E、H
+     * H（山地）连接 C、E、G
      */
     public static final Map<String, Set<String>> ADJACENT_NODES = Map.of(
-            "base_lawful",   Set.of("center", "forest"),
-            "base_aggressive", Set.of("center", "mountain"),
-            "base_neutral",  Set.of("center", "river"),
-            "center",        Set.of("base_lawful", "base_aggressive", "base_neutral", "forest", "river", "mountain"),
-            "forest",        Set.of("base_lawful", "center"),
-            "river",         Set.of("base_neutral", "center"),
-            "mountain",      Set.of("base_aggressive", "center")
+            "A", Set.of("D", "F"),
+            "B", Set.of("D", "E", "G"),
+            "C", Set.of("E", "H"),
+            "D", Set.of("A", "B", "E", "F", "G"),
+            "E", Set.of("B", "C", "D", "G", "H"),
+            "F", Set.of("A", "D"),
+            "G", Set.of("B", "D", "E", "H"),
+            "H", Set.of("C", "E", "G")
     );
 
     /**
      * 阵营对应的基地节点
      */
     public static final Map<String, String> FACTION_BASE = Map.of(
-            "lawful",     "base_lawful",
-            "aggressive", "base_aggressive",
-            "neutral",    "base_neutral"
+            "lawful",     "A",
+            "aggressive", "C",
+            "neutral",    "B"
     );
 
     // ========================================================================
@@ -387,4 +393,85 @@ public final class GameConstants {
      * 发布守序宣言后需要等待10回合才能再次发布
      */
     public static final int ORDER_DECLARATION_COOLDOWN = 10;
+    
+    // ========================================================================
+    // 第十二部分：图结构集成（v2.0新增）
+    // ========================================================================
+    
+    /**
+     * 获取GameGraph单例实例
+     * 用于替代硬编码的节点和邻接关系
+     */
+    public static GameGraph getGameGraph() {
+        return GameGraph.getInstance();
+    }
+    
+    /**
+     * 获取指定节点的相邻节点列表
+     * @param nodeId 节点ID
+     * @return 相邻节点ID列表
+     */
+    public static List<String> getAdjacentNodes(String nodeId) {
+        return getGameGraph().getAdjacentNodes(nodeId);
+    }
+    
+    /**
+     * 检查两个节点是否相邻
+     * @param node1 节点1
+     * @param node2 节点2
+     * @return 是否相邻
+     */
+    public static boolean areAdjacent(String node1, String node2) {
+        return getGameGraph().areAdjacent(node1, node2);
+    }
+    
+    /**
+     * 获取指定阵营的基地节点ID
+     * @param faction 阵营名称
+     * @return 基地节点ID
+     */
+    public static String getFactionBaseNode(String faction) {
+        return FACTION_BASE.get(faction);
+    }
+    
+    /**
+     * 获取所有节点ID列表
+     * @return 所有节点ID
+     */
+    public static Set<String> getAllNodeIds() {
+        return getGameGraph().getNodes().keySet();
+    }
+    
+    /**
+     * 获取所有节点对象列表
+     * @return 所有GraphNode对象
+     */
+    public static List<GraphNode> getAllGraphNodes() {
+        return getGameGraph().getAllNodes();
+    }
+    
+    /**
+     * 获取所有边列表
+     * @return 所有GraphEdge对象
+     */
+    public static List<GraphEdge> getAllGraphEdges() {
+        return getGameGraph().getEdges();
+    }
+    
+    /**
+     * 获取中心节点
+     * @return 中心节点对象
+     */
+    public static GraphNode getCenterNode() {
+        return getGameGraph().getCenter();
+    }
+    
+    /**
+     * 获取指定节点对象
+     * @param nodeId 节点ID
+     * @return GraphNode对象
+     */
+    public static GraphNode getGraphNode(String nodeId) {
+        return getGameGraph().getNode(nodeId);
+    }
 }

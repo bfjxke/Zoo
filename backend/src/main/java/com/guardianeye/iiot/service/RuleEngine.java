@@ -82,7 +82,7 @@ public class RuleEngine {
     }
 
     private ActionResult executeMove(Agent agent, String target, double penalty) {
-        if (target == null || !GameConstants.ALL_NODES.contains(target)) {
+        if (target == null || !GameConstants.getAllNodeIds().contains(target)) {
             return new ActionResult(false, "无效目标节点: " + target, null, null);
         }
 
@@ -90,7 +90,7 @@ public class RuleEngine {
             return new ActionResult(false, "已在目标节点: " + target, null, null);
         }
 
-        Set<String> adjacent = GameConstants.ADJACENT_NODES.get(agent.getCurrentNode());
+        List<String> adjacent = GameConstants.getAdjacentNodes(agent.getCurrentNode());
         if (adjacent == null || !adjacent.contains(target)) {
             return new ActionResult(false,
                     "无法从 " + agent.getCurrentNode() + " 移动到 " + target + "，节点不相邻", null, null);

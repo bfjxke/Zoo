@@ -36,6 +36,23 @@ public class SandboxStateMachine {
     }
 
     @Transactional
+    public GameState resetGameState() {
+        List<GameState> states = gameStateRepository.findAll();
+        if (!states.isEmpty()) {
+            GameState gs = states.get(0);
+            gs.setCurrentTick(0);
+            gs.setRunning(false);
+            gs.setOrderSwordSpawned(false);
+            gs.setOrderSwordHolderId(null);
+            gs.setOrderDeclarationActive(false);
+            gs.setLastDeclarationTick(0);
+            gs.setLastTickTime(LocalDateTime.now());
+            return gameStateRepository.save(gs);
+        }
+        return getOrCreateGameState();
+    }
+
+    @Transactional
     public void executeTick() {
         GameState gameState = getOrCreateGameState();
         if (!gameState.getRunning()) {
@@ -87,38 +104,22 @@ public class SandboxStateMachine {
     }
 
     private void applyPassiveConsumption(Agent agent, int tick) {
-        double staminaCost = GameConstants.STAMINA_BASE_COST;
-
-        agent.applyFatigueMultiplier();
-
-        // 只有疲劳状态会增加饱食消耗，饥饿状态不再增加饱食消耗
-        if (agent.isFatigued()) {
-            staminaCost *= GameConstants.PENALTY_MULTIPLIER;
-        }
-        // 饥饿只影响耐力消耗和扣血，不影响饱食消耗
-        if (agent.isHungry()) {
-            staminaCost *= GameConstants.PENALTY_MULTIPLIER;
+        if (tick % 3 == 0) {
+            agent.setSatiety(Math.max(0, (int)(agent.getSatiety() - GameConstants.SATIETY_BASE_COST)));
         }
 
-        agent.setStamina(Math.max(0, (int)(agent.getStamina() - staminaCost)));
-        agent.setSatiety(Math.max(0, (int)(agent.getSatiety() - GameConstants.SATIETY_BASE_COST)));
-
-        // 饥饿扣血从5提高到20
         if (agent.isHungry()) {
             agent.setHealth(Math.max(0, agent.getHealth() - GameConstants.HEALTH_HUNGER_DAMAGE));
             logAction(tick, agent.getName(), agent.getFaction(), "HUNGER_DAMAGE",
                     "饥饿扣血 -" + GameConstants.HEALTH_HUNGER_DAMAGE, null, null);
         }
 
-        // 新增功能：饱食回血机制
         int healthRegen = 0;
         if (agent.getSatiety() > GameConstants.SATIETY_BUFF_THRESHOLD) {
-            // 饱食>100：回血10点
             healthRegen = GameConstants.HEALTH_REGEN_BUFF;
             logAction(tick, agent.getName(), agent.getFaction(), "HEALTH_REGEN",
                     "饱餐Buff回血 +" + healthRegen, null, null);
         } else if (agent.getSatiety() > GameConstants.HEALTH_REGEN_SATIETY_THRESHOLD) {
-            // 饱食>30：回血5点
             healthRegen = GameConstants.HEALTH_REGEN_NORMAL;
             logAction(tick, agent.getName(), agent.getFaction(), "HEALTH_REGEN",
                     "饱食回血 +" + healthRegen, null, null);
@@ -133,7 +134,7 @@ public class SandboxStateMachine {
         if (agent.isDead()) {
             agent.setAlive(false);
             agent.setDeathTicksRemaining(GameConstants.RESPAWN_TICKS);
-            String baseNode = GameConstants.FACTION_BASE.getOrDefault(agent.getFaction(), "center");
+            String baseNode = GameConstants.getFactionBaseNode(agent.getFaction());
             agent.setCurrentNode(baseNode);
             logAction(tick, agent.getName(), agent.getFaction(), "DEATH",
                     "健康归零，进入死亡复活流程，复活位置: " + baseNode, null, null);
@@ -158,7 +159,7 @@ public class SandboxStateMachine {
             agent.setHealth(GameConstants.HEALTH_INITIAL * GameConstants.RESPAWN_STAT_PERCENT / 100);
             agent.setFatigued(false);
             agent.setHungry(false);
-            String baseNode = GameConstants.FACTION_BASE.getOrDefault(agent.getFaction(), "center");
+            String baseNode = GameConstants.getFactionBaseNode(agent.getFaction());
             agent.setCurrentNode(baseNode);
             logAction(tick, agent.getName(), agent.getFaction(), "RESPAWN",
                     "复活！状态重置为50%，位置: " + baseNode, null, null);

@@ -27,17 +27,7 @@
 
     <div class="map-container">
       <h3>上帝视角地图</h3>
-      <div class="map-grid">
-        <div v-for="node in mapNodes" :key="node.name" class="map-node" :class="node.type">
-          <div class="node-name">{{ node.label }}</div>
-          <div class="node-agents">
-            <span v-for="agent in getAgentsAtNode(node.name)" :key="agent.id"
-                  class="agent-dot" :class="agent.faction"
-                  :title="`${agent.name} (${agent.faction}) E:${agent.stamina} S:${agent.satiety} H:${agent.health}`">
-            </span>
-          </div>
-        </div>
-      </div>
+      <GameMap :agents="store.agents" />
     </div>
 
     <div class="agents-panel">
@@ -90,30 +80,18 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useSandboxStore } from './stores/sandbox'
 import { godApi } from './api'
+import GameMap from './components/GameMap.vue'
 
 const store = useSandboxStore()
 const selectedFaction = ref('lawful')
-
-const mapNodes = [
-  { name: 'base_lawful', label: '守序基地', type: 'base lawful' },
-  { name: 'base_aggressive', label: '强势基地', type: 'base aggressive' },
-  { name: 'base_neutral', label: '中立基地', type: 'base neutral' },
-  { name: 'center', label: '中心广场', type: 'center' },
-  { name: 'forest', label: '森林', type: 'resource' },
-  { name: 'river', label: '河流', type: 'resource' },
-  { name: 'mountain', label: '山脉', type: 'resource' },
-]
+let pollInterval = null
 
 const filteredAgents = computed(() => {
   return store.agents.filter(a => a.faction === selectedFaction.value)
 })
-
-function getAgentsAtNode(nodeName) {
-  return store.agents.filter(a => a.currentNode === nodeName && a.alive)
-}
 
 async function godAirdrop() {
   await godApi.airdrop('center', 50)
@@ -128,8 +106,27 @@ async function godAmnesty() {
   await store.fetchAgents()
 }
 
+function startPolling() {
+  if (pollInterval) return
+  pollInterval = setInterval(async () => {
+    await Promise.all([store.fetchState(), store.fetchAgents()])
+  }, 1000) // 每秒轮询一次
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval)
+    pollInterval = null
+  }
+}
+
 onMounted(async () => {
   await Promise.all([store.fetchState(), store.fetchAgents()])
+  startPolling()
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
 
@@ -267,83 +264,15 @@ body {
   border-radius: 12px;
   padding: 20px;
   margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .map-container h3 {
   margin-bottom: 16px;
   color: #00d4ff;
-}
-
-.map-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-}
-
-.map-node {
-  background: #2a3040;
-  border-radius: 8px;
-  padding: 12px;
-  text-align: center;
-  min-height: 80px;
-  transition: all 0.2s;
-}
-
-.map-node.base {
-  border: 2px solid rgba(255, 255, 255, 0.1);
-}
-
-.map-node.lawful {
-  border-color: rgba(0, 200, 83, 0.4);
-}
-
-.map-node.aggressive {
-  border-color: rgba(255, 82, 82, 0.4);
-}
-
-.map-node.neutral {
-  border-color: rgba(255, 193, 7, 0.4);
-}
-
-.map-node.center {
-  border-color: rgba(0, 212, 255, 0.4);
-  grid-column: 2 / 4;
-}
-
-.map-node.resource {
-  border-color: rgba(139, 195, 74, 0.4);
-}
-
-.node-name {
-  font-size: 0.85rem;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
-.node-agents {
-  display: flex;
-  gap: 4px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.agent-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.agent-dot.lawful {
-  background: #00c853;
-}
-
-.agent-dot.aggressive {
-  background: #ff5252;
-}
-
-.agent-dot.neutral {
-  background: #ffc107;
+  align-self: flex-start;
 }
 
 .agents-panel {

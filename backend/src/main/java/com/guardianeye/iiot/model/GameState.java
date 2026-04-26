@@ -20,7 +20,7 @@ public class GameState {
     private Boolean running = false;
 
     @Column(nullable = false)
-    private LocalDateTime lastTickTime = LocalDateTime.now();
+    private LocalDateTime lastTickTime;
 
     // ==================== 秩序之剑系统 ====================
 

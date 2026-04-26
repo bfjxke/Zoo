@@ -5,7 +5,10 @@ import com.guardianeye.iiot.model.AgentRepository;
 import com.guardianeye.iiot.model.ActionLog;
 import com.guardianeye.iiot.model.ActionLogRepository;
 import com.guardianeye.iiot.model.GameState;
+import com.guardianeye.iiot.model.GraphEdge;
+import com.guardianeye.iiot.model.GraphNode;
 import com.guardianeye.iiot.service.SandboxStateMachine;
+import com.guardianeye.iiot.service.PersonalityService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,6 +24,7 @@ public class SandboxController {
     private final SandboxStateMachine stateMachine;
     private final AgentRepository agentRepository;
     private final ActionLogRepository actionLogRepository;
+    private final PersonalityService personalityService;
 
     @GetMapping("/state")
     public ResponseEntity<GameState> getState() {
@@ -70,9 +74,8 @@ public class SandboxController {
 
     @PostMapping("/init")
     public ResponseEntity<String> initAgents() {
-        if (agentRepository.count() > 0) {
-            return ResponseEntity.ok("Agent已存在，跳过初始化");
-        }
+        agentRepository.deleteAll();
+        stateMachine.resetGameState();
 
         String[][] lawfulAgents = {
                 {"守序领袖", "lawful", "leader"},
@@ -94,16 +97,19 @@ public class SandboxController {
                 {"中立领袖", "neutral", "leader"},
                 {"中立兵-Alpha", "neutral", "soldier"},
                 {"中立兵-Beta", "neutral", "soldier"},
-                {"中立兵-Gamma", "neutral", "soldier"}
+                {"中立兵-Gamma", "neutral", "soldier"},
+                {"中立兵-Delta", "neutral", "soldier"}
         };
 
         createAgents(lawfulAgents);
         createAgents(aggressiveAgents);
         createAgents(neutralAgents);
+        
+        personalityService.assignRandomPersonalityToAll();
 
         stateMachine.getOrCreateGameState();
 
-        return ResponseEntity.ok("15个Agent初始化完成！守序5 + 强势5 + 中立5");
+        return ResponseEntity.ok("15个Agent初始化完成！守序5 + 强势5 + 中立5，性格已随机分配");
     }
 
     private void createAgents(String[][] data) {
@@ -112,8 +118,45 @@ public class SandboxController {
             agent.setName(d[0]);
             agent.setFaction(d[1]);
             agent.setRole(d[2]);
-            agent.setCurrentNode("base_" + d[1]);
+            // 新的节点：A=守序基地，B=中立基地，C=激进基地
+            if ("lawful".equals(d[1])) {
+                agent.setCurrentNode("A");
+            } else if ("aggressive".equals(d[1])) {
+                agent.setCurrentNode("C");
+            } else {
+                agent.setCurrentNode("B");
+            }
             agentRepository.save(agent);
         }
+    }
+    
+    @GetMapping("/graph")
+    public ResponseEntity<Map<String, Object>> getGraph() {
+        List<GraphNode> nodes = com.guardianeye.iiot.model.GameConstants.getAllGraphNodes();
+        List<GraphEdge> edges = com.guardianeye.iiot.model.GameConstants.getAllGraphEdges();
+        
+        Map<String, Object> graph = Map.of(
+            "nodes", nodes,
+            "edges", edges,
+            "nodeCount", nodes.size(),
+            "edgeCount", edges.size()
+        );
+        
+        return ResponseEntity.ok(graph);
+    }
+    
+    @GetMapping("/graph/node/{nodeId}")
+    public ResponseEntity<GraphNode> getNode(@PathVariable String nodeId) {
+        GraphNode node = com.guardianeye.iiot.model.GameConstants.getGraphNode(nodeId);
+        if (node == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(node);
+    }
+    
+    @GetMapping("/graph/node/{nodeId}/adjacent")
+    public ResponseEntity<List<String>> getAdjacentNodes(@PathVariable String nodeId) {
+        List<String> adjacent = com.guardianeye.iiot.model.GameConstants.getAdjacentNodes(nodeId);
+        return ResponseEntity.ok(adjacent);
     }
 }

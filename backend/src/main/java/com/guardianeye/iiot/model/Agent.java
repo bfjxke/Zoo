@@ -31,7 +31,7 @@ public class Agent {
     private Integer health = 100;
 
     @Column(nullable = false)
-    private String currentNode = "base";
+    private String currentNode;
 
     @Column(nullable = false)
     private Boolean alive = true;
@@ -47,6 +47,20 @@ public class Agent {
 
     @Column(nullable = false)
     private Integer tickCount = 0;
+    
+    @Column
+    private String personality;
+    
+    public String getPersonalityName() {
+        if (personality == null) return "普通";
+        PersonalityTraits trait = PersonalityTraits.getById(personality);
+        return trait != null ? trait.getName() : "普通";
+    }
+    
+    public PersonalityTraits getPersonalityTrait() {
+        if (personality == null) return null;
+        return PersonalityTraits.getById(personality);
+    }
 
     public boolean isFatigued() {
         return stamina < 20;

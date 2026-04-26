@@ -282,6 +282,304 @@ public ActionResult stealFood(Agent agent, String targetFaction) {
 
 ---
 
-*文档版本：1.1*
+## 四、Phase 2 已完成内容（v1.2）
+
+### 已完成
+- ✅ Python异步并发调度（asyncio.gather）
+- ✅ 令牌桶限流器（TokenBucketRateLimiter）
+- ✅ Agent记忆管理器（16回合常规+永久重要）
+- ✅ 重要记忆可修改（盟友变敌人）
+- ✅ 秩序之剑详细信息模板
+- ✅ 模型分层策略（m2.7/m2-her）
+
+### 预研功能
+- 🔄 死信队列（Dead Letter Queue）
+- 🔄 Agent自主判断重要记忆
+- 🔄 记忆动态更新机制
+
+---
+
+## 四、Phase 3 规划（可观测性与审计）
+
+### 核心内容
+- ✅ 统一日志系统（audit_logger.py）
+- ✅ 完整MySQL表结构（schema.sql）
+- ✅ 违规操作日志（violation.log）
+- ✅ 前端监控大屏
+- ✅ 责任链模式（日志处理）- **必须**
+- ✅ 观察者模式（状态通知）- **必须**
+
+### 设计模式应用
+| 模式 | 应用场景 | 必须性 |
+|------|----------|--------|
+| 责任链 | 日志处理链路 | **必须** |
+| 观察者 | 状态变化通知 | **必须** |
+| 策略模式 | 阵营世界观 | Phase 4 |
+
+### 预计工作量
+- Sprint 1: Python日志系统（10h）
+- Sprint 2: Java责任链重构（12h）
+- Sprint 3: MySQL表结构（10h）
+- Sprint 4: 观察者模式重构（12h）
+- Sprint 5: 前端监控大屏（12h）
+- **总计**: 58h
+
+---
+
+## 五、架构升级设计模式（备忘录）
+
+### 5.1 责任链模式（Chain of Responsibility）
+
+**目标**：拆分executeTick()方法
+
+**当前问题**：
+```java
+// executeTick()承担6个职责，300+行代码
+public void executeTick() {
+    被动消耗
+    秩序之剑检查
+    复活处理
+    和平结局检查
+    Python调度
+    状态保存
+}
+```
+
+**目标架构**：
+```java
+public interface TickHandler {
+    void handle(GameState state, List<Agent> agents);
+}
+
+public class TickChain {
+    private List<TickHandler> handlers = List.of(
+        new PassiveConsumeHandler(),
+        new OrderSwordHandler(),
+        new RespawnHandler(),
+        new PeaceEndingHandler(),
+        new PythonDispatchHandler(),
+        new StateSaveHandler()
+    );
+}
+```
+
+**预计阶段**：Phase 3
+
+---
+
+### 5.2 策略模式（Strategy）- 阵营世界观和动作偏好
+
+**应用场景**：不同阵营不同的世界观描述和动作偏好
+
+**注意**：Buff和惩罚是统一的（游戏规则），但世界观和AI决策风格可以用策略
+
+**目标架构**：
+```java
+// 阵营世界观策略
+public interface WorldviewStrategy {
+    String getSystemPrompt();  // 给AI的系统提示
+    String getFactionDescription();  // 阵营描述
+}
+
+public class LawfulWorldview implements WorldviewStrategy {
+    @Override
+    public String getSystemPrompt() {
+        return "你是守序阵营的Agent，代表朝廷建立秩序...";
+    }
+}
+
+public class AggressiveWorldview implements WorldviewStrategy {
+    @Override
+    public String getSystemPrompt() {
+        return "你是激进阵营的Agent，挑战旧秩序...";
+    }
+}
+
+public class NeutralWorldview implements WorldviewStrategy {
+    @Override
+    public String getSystemPrompt() {
+        return "你是中立阵营的Agent，游走各方...";
+    }
+}
+
+// 工厂创建
+public class WorldviewFactory {
+    public static WorldviewStrategy getStrategy(String faction) {
+        return switch (faction) {
+            case "lawful" -> new LawfulWorldview();
+            case "aggressive" -> new AggressiveWorldview();
+            default -> new NeutralWorldview();
+        };
+    }
+}
+```
+
+**应用位置**：Python Agent调度器，根据Agent阵营选择对应的WorldviewStrategy
+
+**预计阶段**：Phase 3
+
+---
+
+### 5.3 观察者模式（Observer）
+
+**目标**：状态变化通知解耦
+
+**当前问题**：
+```java
+// 状态变化时，硬编码通知多个服务
+webSocket.push(state);
+log.info(state);
+metrics.record(state);
+```
+
+**目标架构**：
+```java
+public interface GameObserver {
+    void onTickComplete(GameState state);
+}
+
+public class WebSocketObserver implements GameObserver { }
+public class LogObserver implements GameObserver { }
+public class MetricsObserver implements GameObserver { }
+
+public class GameNotifier {
+    private List<GameObserver> observers;
+    public void notify(GameState state) {
+        for (observer : observers) {
+            observer.onTickComplete(state);
+        }
+    }
+}
+```
+
+**预计阶段**：Phase 3
+
+---
+
+### 5.4 死信队列（Dead Letter Queue）
+
+**目标**：处理失败的API请求
+
+**问题场景**：
+```
+请求 → API失败 → 重试3次 → 仍然失败 → 怎么办？
+```
+
+**目标架构**：
+```python
+class DeadLetterQueue:
+    def add(self, request):
+        # 存入队列
+        # 发送告警通知管理员
+
+    def retry_later(self):
+        # 定时重试失败的请求
+```
+
+**预计阶段**：Phase 2 或 Phase 3
+
+---
+
+## 六、记忆系统升级（备忘录）
+
+### 6.1 记忆类型扩展
+
+**当前实现**：
+- 常规记忆（16回合）
+- 重要记忆（永久，可修改）
+- 秩序之剑详情（永久）
+
+**待实现**：
+- 盟友/敌对关系自动识别
+- Agent自主判断重要记忆
+- 记忆置信度（模糊记忆 → 确认记忆）
+- 记忆过期机制（旧的盟友信息可能过时）
+
+### 6.2 Agent自主记忆管理
+
+**目标**：Agent能自己判断什么重要
+
+**设计思路**：
+```python
+# Agent的决策输出
+{
+    "action": "move",
+    "target": "center",
+    "reasoning": "我观察到X是盟友，应该去帮他",
+    "important_memory": "X是盟友（确认）",
+    "update_memory": "X之前是中立，现在可能变成敌人"
+}
+```
+
+**预计阶段**：Phase 4
+
+---
+
+## 七、设计思想笔记
+
+### 7.1 核心设计原则
+
+| 原则 | 说明 | 例子 |
+|------|------|------|
+| 统一规则 | Buff和惩罚是游戏规则，所有人平等 | 所有阵营统一惩罚 |
+| 差异化定位 | 世界观和AI决策风格可以差异化 | 守序=朝廷，激进=反贼 |
+| 解耦思维 | 不是为了模式而模式，真的需要才用 | 责任链/观察者/策略 |
+| 架构优先 | 先设计后实现，不要堆代码 | 画架构图再写代码 |
+
+### 7.2 设计模式使用原则
+
+```
+不是所有场景都要用设计模式！
+
+适合用模式的场景：
+- 真的需要解耦（多个地方要调用）
+- 真的需要扩展（未来可能新增实现）
+- 真的需要灵活替换（不同策略切换）
+
+不适合用模式的场景：
+- 只有一处调用
+- 永远不会有变化
+- 为了"好看"而用
+```
+
+### 7.3 架构设计流程
+
+```
+1. 理解需求
+   ↓
+2. 画架构图（不用写代码）
+   ↓
+3. 识别变化点（什么会变？）
+   ↓
+4. 选择合适的模式（真的合适才用）
+   ↓
+5. 编写代码
+   ↓
+6. 验证设计
+```
+
+### 7.4 阵营世界观设计方向
+
+| 阵营 | 定位 | AI世界观 |
+|------|------|----------|
+| 守序 | 朝廷 | 建立秩序，维护正统 |
+| 中立 | 江湖 | 游走各方，待价而沽 |
+| 激进 | 反贼 | 挑战秩序，争霸天下 |
+
+**策略模式应用**：为每个阵营设计不同的SystemPrompt，影响AI决策风格
+
+### 7.3 异步思维
+
+```
+同步：等一个完成再做下一个
+异步：同时做多个，最后汇总结果
+
+asyncio.gather = 同时发起15个请求，1秒完成
+time.sleep(1) = 串行执行15秒
+```
+
+---
+
+*文档版本：1.2*
 *创建日期：2026-04-16*
-*最后更新：2026-04-16*
+*最后更新：2026-04-23*

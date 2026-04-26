@@ -14,6 +14,9 @@ export const sandboxApi = {
   executeAction: (id, action, target) => api.post(`/api/agents/${id}/action`, { action, target }),
   getLogs: (tick) => api.get('/api/logs', { params: { tick } }),
   initAgents: () => api.post('/api/init'),
+  getGraph: () => api.get('/api/graph'),
+  getNode: (nodeId) => api.get(`/api/graph/node/${nodeId}`),
+  getAdjacentNodes: (nodeId) => api.get(`/api/graph/node/${nodeId}/adjacent`),
 }
 
 export const godApi = {
