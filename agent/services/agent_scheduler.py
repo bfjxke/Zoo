@@ -54,9 +54,9 @@ def select_model_for_agent(agent: Dict[str, Any], special_agents: List[str]) -> 
     - aggressive/neutral各随机一个：标准模型 m2.7
     - 剩下的所有Agent（动物）：角色扮演模型 m2-her
     """
-    agent_name = agent.get("name", "")  # 获取Agent名称
-    agent_role = agent.get("role", "")  # 获取Agent角色
-    agent_faction = agent.get("faction", "")  # 获取Agent阵营
+    agent_name = agent.name  # 获取Agent名称
+    agent_role = agent.role  # 获取Agent角色
+    agent_faction = agent.faction  # 获取Agent阵营
 
     if agent_role == "judge":  # 如果是裁判
         print(f"[模型选择] {agent_name} (裁判) -> {MODEL_STANDARD}")
@@ -84,29 +84,29 @@ def select_special_agents(agents: List[Dict[str, Any]]) -> List[str]:
     """
     special = []  # 初始化特殊Agent列表
 
-    aggressive_agents = [a for a in agents if a.get("faction") == "aggressive" and a.get("role") != "leader"]  # 获取攻击性阵营的非领袖Agent
-    neutral_agents = [a for a in agents if a.get("faction") == "neutral" and a.get("role") != "leader"]  # 获取中立阵营的非领袖Agent
+    aggressive_agents = [a for a in agents if a.faction == "aggressive" and a.role != "leader"]  # 获取攻击性阵营的非领袖Agent
+    neutral_agents = [a for a in agents if a.faction == "neutral" and a.role != "leader"]  # 获取中立阵营的非领袖Agent
 
     if aggressive_agents:  # 如果有攻击性阵营Agent
         selected = random.choice(aggressive_agents)  # 随机选择一个
-        special.append(selected.get("name"))  # 添加到特殊列表
+        special.append(selected.name)  # 添加到特殊列表
 
     if neutral_agents:  # 如果有中立阵营Agent
         selected = random.choice(neutral_agents)  # 随机选择一个
-        special.append(selected.get("name"))  # 添加到特殊列表
+        special.append(selected.name)  # 添加到特殊列表
 
     print(f"[特殊Agent] 使用标准模型的Agent: {special}")
     return special  # 返回特殊Agent列表
 
 
-async def make_decision(agent: Dict[str, Any], model: str = None) -> Dict[str, Any]:
+async def make_decision(agent, model: str = None) -> Dict[str, Any]:
     """为单个Agent做出决策"""
-    agent_role = agent.get("role", "")  # 获取Agent角色
+    agent_role = agent.role  # 获取Agent角色
 
     if agent_role == "judge":  # 如果是裁判
         system_prompt = SYSTEM_PROMPT_JUDGE  # 使用裁判提示
-        user_prompt = f"""动作请求: {agent.get('pending_action')}
-情境: {agent.get('context')}
+        user_prompt = f"""动作请求: {agent.pending_action}
+情境: {agent.context}
 请裁决。"""  # 构建裁决提示
     elif agent_role == "leader":  # 如果是领袖
         system_prompt = SYSTEM_PROMPT_LEADER  # 使用领袖提示
@@ -121,8 +121,8 @@ async def make_decision(agent: Dict[str, Any], model: str = None) -> Dict[str, A
     try:
         decision = json.loads(response)  # 尝试解析JSON响应
         return {
-            "agent_id": agent.get("id"),  # 返回Agent ID
-            "agent_name": agent.get("name"),  # 返回Agent名称
+            "agent_id": agent.id,  # 返回Agent ID
+            "agent_name": agent.name,  # 返回Agent名称
             "model_used": model_to_use,  # 返回使用的模型
             "action": decision.get("action", "rest"),  # 返回动作，默认为休息
             "target": decision.get("target"),  # 返回目标
@@ -130,8 +130,8 @@ async def make_decision(agent: Dict[str, Any], model: str = None) -> Dict[str, A
         }
     except (json.JSONDecodeError, TypeError):  # 解析失败时
         return {
-            "agent_id": agent.get("id"),  # 返回Agent ID
-            "agent_name": agent.get("name"),  # 返回Agent名称
+            "agent_id": agent.id,  # 返回Agent ID
+            "agent_name": agent.name,  # 返回Agent名称
             "model_used": model_to_use,  # 返回使用的模型
             "action": "rest",  # 默认休息
             "target": None,  # 无目标
@@ -139,16 +139,16 @@ async def make_decision(agent: Dict[str, Any], model: str = None) -> Dict[str, A
         }
 
 
-def _build_agent_prompt(agent: Dict[str, Any]) -> str:
+def _build_agent_prompt(agent) -> str:
     """构建Agent决策的user prompt"""
     return f"""当前状态：
-- 名称: {agent.get('name')}
-- 阵营: {agent.get('faction')}
-- 角色: {agent.get('role')}
-- 耐力: {agent.get('stamina')}/100
-- 饱食: {agent.get('satiety')}/100
-- 健康: {agent.get('health')}/100
-- 位置: {agent.get('current_node')}
+- 名称: {agent.name}
+- 阵营: {agent.faction}
+- 角色: {agent.role}
+- 耐力: {agent.stamina}/100
+- 饱食: {agent.satiety}/100
+- 健康: {agent.health}/100
+- 位置: {agent.current_node}
 
 可用节点: {', '.join(AVAILABLE_NODES)}
 请做出决策。"""

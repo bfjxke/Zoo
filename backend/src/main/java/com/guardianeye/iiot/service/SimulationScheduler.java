@@ -1,13 +1,17 @@
 package com.guardianeye.iiot.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.guardianeye.iiot.model.Agent;
 import com.guardianeye.iiot.model.AgentRepository;
 import com.guardianeye.iiot.model.GameConstants;
 import com.guardianeye.iiot.model.GameState;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
 
@@ -19,8 +23,11 @@ public class SimulationScheduler {
     private final SandboxStateMachine stateMachine;
     private final AgentRepository agentRepository;
     private final RuleEngine ruleEngine;
+    private final RestTemplateBuilder restTemplateBuilder;
 
     private final Map<Long, Random> agentRandoms = new HashMap<>();
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final String LLM_SERVICE_URL = "http://localhost:8000/decide";
 
     private Random getAgentRandom(Agent agent) {
         return agentRandoms.computeIfAbsent(agent.getId(), id -> {
@@ -34,18 +41,35 @@ public class SimulationScheduler {
         GameState gameState = stateMachine.getOrCreateGameState();
         
         if (!gameState.getRunning()) {
+            log.debug("[调度器] 游戏未运行，跳过Tick");
             return;
         }
 
         int currentTick = gameState.getCurrentTick();
+        log.info("========================================");
+        log.info("[调度器] ========== Tick #{} 开始 ==========", currentTick);
+        log.info("========================================");
+        
         stateMachine.executeTick();
 
         List<Agent> aliveAgents = agentRepository.findByAliveTrue();
+        log.info("[调度器] 当前存活Agent数量: {}", aliveAgents.size());
+        
         for (Agent agent : aliveAgents) {
             try {
+                log.info("[调度器] === Agent决策开始 ===");
+                log.info("[Agent] ID:{}, 名称:{}, 阵营:{}, 角色:{}", 
+                    agent.getId(), agent.getName(), agent.getFaction(), agent.getRole());
+                log.info("[Agent状态] 位置:{}, 耐力:{}, 饱食:{}, 健康:{}", 
+                    agent.getCurrentNode(), agent.getStamina(), agent.getSatiety(), agent.getHealth());
+                
                 makeUniqueDecision(agent, currentTick);
+                
+                log.info("[Agent决策后] 位置:{}, 耐力:{}, 饱食:{}, 健康:{}", 
+                    agent.getCurrentNode(), agent.getStamina(), agent.getSatiety(), agent.getHealth());
+                log.info("[调度器] === Agent决策结束 ===");
             } catch (Exception e) {
-                log.warn("Agent {} 决策失败: {}", agent.getName(), e.getMessage());
+                log.error("[错误] Agent {} 决策失败: {}", agent.getName(), e.getMessage(), e);
             }
         }
 
@@ -55,255 +79,153 @@ public class SimulationScheduler {
     }
 
     private void makeUniqueDecision(Agent agent, int currentTick) {
+        log.info("[LLM调用] >>> 调用LLM API为Agent {} 做决策", agent.getName());
+        
+        try {
+            Map<String, Object> decision = callLLMForDecision(agent);
+            
+            if (decision != null && decision.containsKey("action")) {
+                String action = (String) decision.get("action");
+                String target = decision.containsKey("target") ? (String) decision.get("target") : null;
+                String reasoning = decision.containsKey("reasoning") ? (String) decision.get("reasoning") : "";
+                String modelUsed = decision.containsKey("model_used") ? (String) decision.get("model_used") : "unknown";
+                
+                log.info("[LLM响应] Agent:{}, 动作:{}, 目标:{}, 推理:{}", 
+                    agent.getName(), action, target, reasoning);
+                log.info("[LLM响应] 使用模型:{}", modelUsed);
+                
+                executeLLMDecision(agent, action, target);
+            } else {
+                log.warn("[LLM响应] Agent {} 返回无效决策，使用备用规则引擎", agent.getName());
+                fallbackToRuleEngine(agent);
+            }
+        } catch (Exception e) {
+            log.error("[LLM错误] Agent {} 调用LLM失败: {}，使用备用规则引擎", agent.getName(), e.getMessage());
+            fallbackToRuleEngine(agent);
+        }
+    }
+
+    private Map<String, Object> callLLMForDecision(Agent agent) {
+        try {
+            RestTemplate restTemplate = restTemplateBuilder.build();
+            
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("tick", 0);
+            requestBody.put("agent_count", 1);
+            
+            List<Map<String, Object>> agentsList = new ArrayList<>();
+            Map<String, Object> agentData = new HashMap<>();
+            agentData.put("id", agent.getId());
+            agentData.put("name", agent.getName());
+            agentData.put("faction", agent.getFaction());
+            agentData.put("role", agent.getRole());
+            agentData.put("stamina", agent.getStamina());
+            agentData.put("satiety", agent.getSatiety());
+            agentData.put("health", agent.getHealth());
+            agentData.put("current_node", agent.getCurrentNode());
+            agentData.put("alive", agent.getAlive());
+            agentData.put("personality", agent.getPersonality());
+            agentsList.add(agentData);
+            
+            requestBody.put("agents", agentsList);
+            
+            log.info("[LLM请求] 发送请求到 {}", LLM_SERVICE_URL);
+            log.info("[LLM请求] 请求体: {}", requestBody);
+            
+            Map<String, Object> response = restTemplate.postForObject(
+                LLM_SERVICE_URL, 
+                requestBody, 
+                Map.class
+            );
+            
+            if (response != null && response.containsKey("decisions")) {
+                List<Map<String, Object>> decisions = (List<Map<String, Object>>) response.get("decisions");
+                if (!decisions.isEmpty()) {
+                    return decisions.get(0);
+                }
+            }
+            
+            log.warn("[LLM响应] 响应格式无效或为空");
+            return null;
+            
+        } catch (Exception e) {
+            log.error("[LLM调用] 网络错误: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private void executeLLMDecision(Agent agent, String action, String target) {
+        log.info("[执行器] >>> Agent {} 执行动作 action:{}, target:{}", agent.getName(), action, target);
+        
+        switch (action.toLowerCase()) {
+            case "move":
+                ruleEngine.validateAndExecute(agent, "move", target);
+                break;
+            case "eat":
+                ruleEngine.validateAndExecute(agent, "eat", null);
+                break;
+            case "rest":
+                ruleEngine.validateAndExecute(agent, "rest", null);
+                break;
+            case "talk":
+                ruleEngine.validateAndExecute(agent, "talk", target != null ? target : "public");
+                break;
+            case "trade":
+                ruleEngine.validateAndExecute(agent, "trade", target);
+                break;
+            case "provoke":
+                ruleEngine.validateAndExecute(agent, "provoke", target);
+                break;
+            default:
+                log.warn("[执行器] 未知动作 {}，执行休息", action);
+                ruleEngine.validateAndExecute(agent, "rest", null);
+        }
+    }
+
+    private void fallbackToRuleEngine(Agent agent) {
+        log.info("[备用引擎] Agent {} 使用规则引擎决策", agent.getName());
+        
         Random rand = getAgentRandom(agent);
         String faction = agent.getFaction();
         String role = agent.getRole();
-        int tickOffset = (int) (agent.getId() % 10);
-
-        if (currentTick % 3 == tickOffset % 3) {
-            if (agent.getSatiety() < 30) {
-                if (agent.getStamina() >= GameConstants.STAMINA_MOVE_COST) {
-                    String food = findFoodSource(agent);
-                    if (food != null) {
-                        ruleEngine.validateAndExecute(agent, "move", food);
-                        return;
-                    }
-                }
-                ruleEngine.validateAndExecute(agent, "eat", null);
-                return;
-            }
+        
+        if (agent.getSatiety() < 30) {
+            ruleEngine.validateAndExecute(agent, "eat", null);
+            return;
         }
-
+        
         if (agent.getStamina() < 20) {
             ruleEngine.validateAndExecute(agent, "rest", null);
             return;
         }
-
-        if ("leader".equals(role) && rand.nextDouble() < 0.08) {
-            executeLeaderSpecialTask(agent, rand);
-            return;
-        }
-
-        if (rand.nextDouble() < 0.15) {
-            executeSecretMission(agent, rand, faction);
-            return;
-        }
-
-        executeFactionStrategy(agent, rand, faction);
-    }
-
-    private void executeLeaderSpecialTask(Agent agent, Random rand) {
-        int taskType = rand.nextInt(4);
-        switch (taskType) {
-            case 0:
-                String enemyNode = findEnemyBase(agent.getFaction());
-                if (enemyNode != null && rand.nextDouble() < 0.3) {
-                    ruleEngine.validateAndExecute(agent, "move", enemyNode);
-                    log.info("[秘密任务] {} 突袭敌方基地: {}", agent.getName(), enemyNode);
-                    return;
-                }
-                break;
-            case 1:
-                ruleEngine.validateAndExecute(agent, "talk", "public");
-                log.info("[秘密任务] {} 发布公开演讲", agent.getName());
-                return;
-            case 2:
-                List<String> allNodes = new ArrayList<>(GameConstants.getAllNodeIds());
-                allNodes.remove(agent.getCurrentNode());
-                String scoutTarget = allNodes.get(rand.nextInt(allNodes.size()));
-                ruleEngine.validateAndExecute(agent, "move", scoutTarget);
-                log.info("[秘密任务] {} 侦察未知区域: {}", agent.getName(), scoutTarget);
-                return;
-            case 3:
-                ruleEngine.validateAndExecute(agent, "eat", null);
-                log.info("[秘密任务] {} 秘密进食", agent.getName());
-                return;
-        }
         
-        executeFactionStrategy(agent, rand, agent.getFaction());
-    }
-
-    private void executeSecretMission(Agent agent, Random rand, String faction) {
-        int missionType = rand.nextInt(5);
-        
-        switch (missionType) {
-            case 0:
-                String stealTarget = findRandomEnemyTerritory(agent, faction);
-                if (stealTarget != null) {
-                    ruleEngine.validateAndExecute(agent, "move", stealTarget);
-                    log.info("[秘密任务] {} 执行偷窃任务，目标是: {}", agent.getName(), stealTarget);
-                    return;
-                }
-                break;
-            case 1:
-                String hideSpot = findHidingSpot(agent);
-                if (hideSpot != null && !hideSpot.equals(agent.getCurrentNode())) {
-                    ruleEngine.validateAndExecute(agent, "move", hideSpot);
-                    log.info("[秘密任务] {} 前往隐蔽地点: {}", agent.getName(), hideSpot);
-                    return;
-                }
-                break;
-            case 2:
-                ruleEngine.validateAndExecute(agent, "talk", faction + "_private");
-                log.info("[秘密任务] {} 进行秘密通讯", agent.getName());
-                return;
-            case 3:
-                String patrolTarget = findPatrolTarget(agent, faction);
-                if (patrolTarget != null) {
-                    ruleEngine.validateAndExecute(agent, "move", patrolTarget);
-                    log.info("[秘密任务] {} 执行巡逻任务: {}", agent.getName(), patrolTarget);
-                    return;
-                }
-                break;
-            case 4:
-                ruleEngine.validateAndExecute(agent, "rest", null);
-                log.info("[秘密任务] {} 秘密休息恢复", agent.getName());
-                return;
-        }
-        
-        executeFactionStrategy(agent, rand, faction);
-    }
-
-    private String findRandomEnemyTerritory(Agent agent, String faction) {
-        Set<String> enemyNodes = new HashSet<>();
-        
-        if (!"lawful".equals(faction)) {
-            enemyNodes.add("A");
-        }
-        if (!"neutral".equals(faction)) {
-            enemyNodes.add("B");
-        }
-        if (!"aggressive".equals(faction)) {
-            enemyNodes.add("C");
-        }
-        
-        enemyNodes.addAll(GameConstants.getAdjacentNodes(agent.getCurrentNode()));
-        
-        if (enemyNodes.isEmpty()) {
-            return null;
-        }
-        
-        List<String> targets = new ArrayList<>(enemyNodes);
-        return targets.get(new Random().nextInt(targets.size()));
-    }
-
-    private String findHidingSpot(Agent agent) {
-        List<String> candidates = new ArrayList<>();
-        for (String nodeId : GameConstants.getAllNodeIds()) {
-            if (!nodeId.equals(agent.getCurrentNode())) {
-                candidates.add(nodeId);
-            }
-        }
-        return candidates.isEmpty() ? null : candidates.get(new Random().nextInt(candidates.size()));
-    }
-
-    private String findPatrolTarget(Agent agent, String faction) {
-        List<String> friendlyNodes = new ArrayList<>();
-        
-        if ("lawful".equals(faction)) {
-            friendlyNodes.addAll(Arrays.asList("A", "F"));
-        } else if ("aggressive".equals(faction)) {
-            friendlyNodes.addAll(Arrays.asList("C", "H"));
-        } else {
-            friendlyNodes.addAll(Arrays.asList("B", "G"));
-        }
-        
-        friendlyNodes.retainAll(GameConstants.getAdjacentNodes(agent.getCurrentNode()));
-        
-        if (friendlyNodes.isEmpty()) {
-            return null;
-        }
-        
-        return friendlyNodes.get(new Random().nextInt(friendlyNodes.size()));
-    }
-
-    private void executeFactionStrategy(Agent agent, Random rand, String faction) {
         int action = rand.nextInt(100);
-
+        
         if ("lawful".equals(faction)) {
             if (action < 30) {
-                moveTowardsObjective(agent, rand, "B", "D");
+                ruleEngine.validateAndExecute(agent, "move", "D");
             } else if (action < 50) {
                 ruleEngine.validateAndExecute(agent, "eat", null);
-            } else if (action < 80) {
-                ruleEngine.validateAndExecute(agent, "rest", null);
             } else {
-                ruleEngine.validateAndExecute(agent, "talk", "lawful_private");
+                ruleEngine.validateAndExecute(agent, "rest", null);
             }
         } else if ("aggressive".equals(faction)) {
             if (action < 50) {
-                moveTowardsObjective(agent, rand, "A", "C");
+                ruleEngine.validateAndExecute(agent, "move", "E");
             } else if (action < 70) {
                 ruleEngine.validateAndExecute(agent, "eat", null);
-            } else if (action < 85) {
-                ruleEngine.validateAndExecute(agent, "rest", null);
             } else {
-                ruleEngine.validateAndExecute(agent, "talk", "aggressive_private");
+                ruleEngine.validateAndExecute(agent, "rest", null);
             }
         } else {
             if (action < 40) {
-                moveTowardsObjective(agent, rand, "G", "E");
+                ruleEngine.validateAndExecute(agent, "move", "G");
             } else if (action < 60) {
                 ruleEngine.validateAndExecute(agent, "eat", null);
-            } else if (action < 85) {
-                ruleEngine.validateAndExecute(agent, "rest", null);
             } else {
-                ruleEngine.validateAndExecute(agent, "talk", "neutral_private");
+                ruleEngine.validateAndExecute(agent, "rest", null);
             }
         }
-    }
-
-    private void moveTowardsObjective(Agent agent, Random rand, String... objectives) {
-        List<String> adjacent = GameConstants.getAdjacentNodes(agent.getCurrentNode());
-        if (adjacent == null || adjacent.isEmpty()) {
-            ruleEngine.validateAndExecute(agent, "rest", null);
-            return;
-        }
-
-        List<String> validTargets = new ArrayList<>(adjacent);
-        for (String obj : objectives) {
-            if (adjacent.contains(obj)) {
-                if (rand.nextDouble() < 0.6) {
-                    ruleEngine.validateAndExecute(agent, "move", obj);
-                    return;
-                }
-            }
-        }
-
-        String randomTarget = validTargets.get(rand.nextInt(validTargets.size()));
-        ruleEngine.validateAndExecute(agent, "move", randomTarget);
-    }
-
-    private String findFoodSource(Agent agent) {
-        Map<String, Integer> foodScores = new HashMap<>();
-        foodScores.put("F", 10);
-        foodScores.put("G", 10);
-        foodScores.put("H", 10);
-        foodScores.put("D", 3);
-        foodScores.put("E", 3);
-        foodScores.put("B", 5);
-
-        List<String> adjacent = GameConstants.getAdjacentNodes(agent.getCurrentNode());
-        if (adjacent == null) return null;
-
-        String bestTarget = null;
-        int bestScore = -1;
-
-        for (String node : adjacent) {
-            int score = foodScores.getOrDefault(node, 1);
-            if (score > bestScore) {
-                bestScore = score;
-                bestTarget = node;
-            }
-        }
-
-        return bestTarget;
-    }
-
-    private String findEnemyBase(String faction) {
-        if ("lawful".equals(faction)) return "C";
-        if ("aggressive".equals(faction)) return "A";
-        return null;
     }
 
     private void autoAirdrop() {

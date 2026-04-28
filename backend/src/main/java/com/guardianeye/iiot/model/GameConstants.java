@@ -242,11 +242,12 @@ public final class GameConstants {
     // ========================================================================
 
     /**
-     * 复活所需回合数：3回合
+     * 复活所需回合数：20回合
      *
-     * Agent死亡后需要等待3个回合才能复活
+     * Agent死亡后需要等待20个回合才能复活
+     * 增加复活时间，使游戏更有策略性
      */
-    public static final int RESPAWN_TICKS = 3;
+    public static final int RESPAWN_TICKS = 20;
 
     /**
      * 复活后属性保留：50%
