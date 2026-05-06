@@ -1,12 +1,8 @@
 package com.guardianeye.iiot.logger;
 
 import lombok.Data;
-import lombok.Getter;
-import lombok.Setter;
 
 @Data
-@Getter
-@Setter
 public class LogEntry {
     private int tick;
     private String agent;

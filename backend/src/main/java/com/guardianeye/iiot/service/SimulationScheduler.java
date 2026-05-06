@@ -1,4 +1,4 @@
-package com.guardianeye.iiot.service;
+    package com.guardianeye.iiot.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -6,8 +6,10 @@ import com.guardianeye.iiot.model.Agent;
 import com.guardianeye.iiot.model.AgentRepository;
 import com.guardianeye.iiot.model.GameConstants;
 import com.guardianeye.iiot.model.GameState;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -27,7 +29,26 @@ public class SimulationScheduler {
 
     private final Map<Long, Random> agentRandoms = new HashMap<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final String LLM_SERVICE_URL = "http://localhost:8000/decide";
+
+    @Value("${python.agent.url}")
+    private String pythonAgentBaseUrl;
+
+    private static final String DECIDE_ENDPOINT = "/decide";
+
+    @PostConstruct
+    public void validateConfiguration() {
+        if (pythonAgentBaseUrl == null || pythonAgentBaseUrl.trim().isEmpty()) {
+            throw new IllegalStateException("配置项 python.agent.url 未设置或为空");
+        }
+        if (!pythonAgentBaseUrl.startsWith("http://") && !pythonAgentBaseUrl.startsWith("https://")) {
+            log.warn("配置项 python.agent.url 可能无效: {}，请确保使用 http:// 或 https://", pythonAgentBaseUrl);
+        }
+        log.info("LLM服务地址: {}{}", pythonAgentBaseUrl, DECIDE_ENDPOINT);
+    }
+
+    private String getLLMServiceUrl() {
+        return pythonAgentBaseUrl + DECIDE_ENDPOINT;
+    }
 
     private Random getAgentRandom(Agent agent) {
         return agentRandoms.computeIfAbsent(agent.getId(), id -> {
@@ -82,7 +103,7 @@ public class SimulationScheduler {
         log.info("[LLM调用] >>> 调用LLM API为Agent {} 做决策", agent.getName());
         
         try {
-            Map<String, Object> decision = callLLMForDecision(agent);
+            Map<String, Object> decision = callLLMForDecision(agent, currentTick);
             
             if (decision != null && decision.containsKey("action")) {
                 String action = (String) decision.get("action");
@@ -105,12 +126,12 @@ public class SimulationScheduler {
         }
     }
 
-    private Map<String, Object> callLLMForDecision(Agent agent) {
+    private Map<String, Object> callLLMForDecision(Agent agent, int currentTick) {
         try {
             RestTemplate restTemplate = restTemplateBuilder.build();
             
             Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("tick", 0);
+            requestBody.put("tick", currentTick);
             requestBody.put("agent_count", 1);
             
             List<Map<String, Object>> agentsList = new ArrayList<>();
@@ -129,12 +150,13 @@ public class SimulationScheduler {
             
             requestBody.put("agents", agentsList);
             
-            log.info("[LLM请求] 发送请求到 {}", LLM_SERVICE_URL);
+            String llmServiceUrl = getLLMServiceUrl();
+            log.info("[LLM请求] 发送请求到 {}", llmServiceUrl);
             log.info("[LLM请求] 请求体: {}", requestBody);
             
             Map<String, Object> response = restTemplate.postForObject(
-                LLM_SERVICE_URL, 
-                requestBody, 
+                llmServiceUrl,
+                requestBody,
                 Map.class
             );
             

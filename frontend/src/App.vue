@@ -94,7 +94,7 @@ const filteredAgents = computed(() => {
 })
 
 async function godAirdrop() {
-  await godApi.airdrop('center', 50)
+  await godApi.airdrop('D', 50)
 }
 
 async function godPlague() {

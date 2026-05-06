@@ -41,7 +41,7 @@ SYSTEM_PROMPT_JUDGE = """你是GuardianEye-IIoT沙箱动物园中的AI判官。
 
 请以JSON格式回复：{"approved": true/false, "success_rate": 0.0-1.0, "reasoning": "理由"}"""
 
-AVAILABLE_NODES = ["base_lawful", "base_aggressive", "base_neutral", "center", "forest", "river", "mountain"]
+AVAILABLE_NODES = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
 
 def select_model_for_agent(agent: Dict[str, Any], special_agents: List[str]) -> str:

@@ -68,6 +68,7 @@ public class RuleEngine {
             case "rest" -> executeRest(agent, penalty);
             case "talk" -> executeTalk(agent, target);
             case "trade" -> executeTrade(agent, target, penalty);
+            case "provoke" -> executeProvoke(agent, target);
             default -> new ActionResult(false, "未知动作: " + action, null, null);
         };
     }
@@ -196,7 +197,7 @@ public class RuleEngine {
             }
         }
 
-        if (!GameConstants.FACTION_CHANNELS.contains(ch) && !ch.equals("public")) {
+        if (!GameConstants.FACTION_CHANNELS.contains(ch)) {
             log.warn("[规则引擎-TALK] <<< 无效频道:{}", ch);
             return new ActionResult(false, "无效频道: " + ch, null, null);
         }
@@ -214,6 +215,12 @@ public class RuleEngine {
         agent.setStamina(agent.getStamina() - cost);
         return new ActionResult(true,
                 "与 " + (target != null ? target : "未知") + " 交易，消耗耐力 " + cost, null, null);
+    }
+
+    private ActionResult executeProvoke(Agent agent, String target) {
+        String targetDesc = target != null ? "对 " + target : "";
+        return new ActionResult(true,
+                "挑衅" + targetDesc + "【无实际数值影响】", null, null);
     }
     
     /**

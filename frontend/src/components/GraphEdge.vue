@@ -103,18 +103,22 @@ export default {
       return Math.sqrt(this.dx * this.dx + this.dy * this.dy)
     },
     adjustedStartX() {
+      if (this.distance === 0) return this.startX
       const ratio = this.nodeRadius / this.distance
       return this.startX + this.dx * ratio
     },
     adjustedStartY() {
+      if (this.distance === 0) return this.startY
       const ratio = this.nodeRadius / this.distance
       return this.startY + this.dy * ratio
     },
     adjustedEndX() {
+      if (this.distance === 0) return this.endX
       const ratio = this.nodeRadius / this.distance
       return this.endX - this.dx * ratio
     },
     adjustedEndY() {
+      if (this.distance === 0) return this.endY
       const ratio = this.nodeRadius / this.distance
       return this.endY - this.dy * ratio
     }

@@ -72,7 +72,7 @@ export function getNodeLabel(node) {
     }
     
     if (node.type === 'CENTER') {
-        return '河流'
+        return '广场'
     }
     
     if (node.type === 'WILDERNESS') {

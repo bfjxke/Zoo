@@ -87,18 +87,7 @@ public class SandboxStateMachine {
         // 阶段2.5: 检查和平结局
         checkPeaceEnding(gameState);
 
-        // 阶段3: 调度Python获取Agent决策
-        List<Agent> currentAlive = agentRepository.findByAliveTrue();
-        if (!currentAlive.isEmpty()) {
-            try {
-                String decisions = pythonDispatcher.requestDecisions(tick, currentAlive);
-                log.info("[Tick #{}] Python调度器返回决策: {}", tick, decisions);
-            } catch (Exception e) {
-                log.warn("[Tick #{}] Python调度器调用失败: {}", tick, e.getMessage());
-            }
-        }
-
-        // 阶段4: 保存游戏状态
+        // 阶段3: 保存游戏状态
         gameStateRepository.save(gameState);
         log.info("========== [Tick #{}] 结算完成 ==========", tick);
     }
@@ -171,14 +160,10 @@ public class SandboxStateMachine {
      * @param gameState 当前游戏状态
      */
     private void checkOrderSwordSpawn(GameState gameState) {
-        // 如果剑还未生成且当前回合>=40，则生成剑
         if (!gameState.getOrderSwordSpawned() && gameState.getCurrentTick() >= 40) {
-            // 随机选择中心或野外节点作为生成位置
-            List<String> spawnNodes = List.of("center", "forest", "river", "mountain");
+            List<String> spawnNodes = List.of("D", "E", "F", "G", "H");
             String spawnNode = spawnNodes.get(new Random().nextInt(spawnNodes.size()));
-            // 设置剑的位置为随机选择的节点
             gameState.setOrderSwordLocation(spawnNode);
-            // 标记剑已生成
             gameState.setOrderSwordSpawned(true);
             log.info("[秩序之剑] 在 {} 生成！", spawnNode);
         }

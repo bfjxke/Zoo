@@ -54,7 +54,7 @@ async def call_minimax(
 def _mock_response(user_prompt: str) -> str:
     import random
     actions = ["move", "eat", "rest", "talk"]
-    targets = ["center", "forest", "river", "mountain", "base"]
+    targets = ["D", "E", "F", "G", "H", "A", "B", "C"]
     action = random.choice(actions)
     target = random.choice(targets)
     return json.dumps({

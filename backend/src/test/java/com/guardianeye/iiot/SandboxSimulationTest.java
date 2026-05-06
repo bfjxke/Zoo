@@ -18,7 +18,6 @@ class SandboxSimulationTest {
 
     @BeforeEach
     void setUp() {
-        // 创建模拟的AgentRepository用于测试
         AgentRepository mockAgentRepository = Mockito.mock(AgentRepository.class);
         ruleEngine = new RuleEngine(mockAgentRepository);
         testAgent = new Agent();
@@ -29,7 +28,7 @@ class SandboxSimulationTest {
         testAgent.setStamina(GameConstants.STAMINA_INITIAL);
         testAgent.setSatiety(GameConstants.SATIETY_INITIAL);
         testAgent.setHealth(GameConstants.HEALTH_INITIAL);
-        testAgent.setCurrentNode("base_lawful");
+        testAgent.setCurrentNode("A");
         testAgent.setAlive(true);
         testAgent.setFatigued(false);
         testAgent.setHungry(false);
@@ -38,10 +37,10 @@ class SandboxSimulationTest {
     @Test
     @DisplayName("满状态Agent: 移动消耗15耐力")
     void testMoveFromFullState() {
-        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "center");
+        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "D");
         assertTrue(result.isSuccess());
         assertEquals(85, testAgent.getStamina());
-        assertEquals("center", testAgent.getCurrentNode());
+        assertEquals("D", testAgent.getCurrentNode());
     }
 
     @Test
@@ -49,7 +48,7 @@ class SandboxSimulationTest {
     void testMoveWhileFatigued() {
         testAgent.setStamina(19);
         testAgent.setFatigued(true);
-        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "center");
+        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "D");
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("耐力不足"));
     }
@@ -61,7 +60,7 @@ class SandboxSimulationTest {
         testAgent.setSatiety(10);
         testAgent.setFatigued(true);
         testAgent.setHungry(true);
-        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "center");
+        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "D");
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("耐力不足"));
     }
@@ -70,7 +69,7 @@ class SandboxSimulationTest {
     @DisplayName("耐力不足: 移动失败")
     void testMoveInsufficientStamina() {
         testAgent.setStamina(5);
-        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "center");
+        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "D");
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("耐力不足"));
     }
@@ -78,8 +77,8 @@ class SandboxSimulationTest {
     @Test
     @DisplayName("节点不相邻: 移动失败")
     void testMoveNonAdjacentNode() {
-        testAgent.setCurrentNode("base_lawful");
-        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "base_aggressive");
+        testAgent.setCurrentNode("A");
+        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "C");
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("不相邻"));
     }
@@ -134,7 +133,7 @@ class SandboxSimulationTest {
     @Test
     @DisplayName("阵营私聊: 在基地节点可以发言")
     void testFactionPrivateChatAtBase() {
-        testAgent.setCurrentNode("base_lawful");
+        testAgent.setCurrentNode("A");
         RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "talk", "lawful_private");
         assertTrue(result.isSuccess());
     }
@@ -142,7 +141,7 @@ class SandboxSimulationTest {
     @Test
     @DisplayName("阵营私聊: 不在基地节点不能发言")
     void testFactionPrivateChatNotAtBase() {
-        testAgent.setCurrentNode("center");
+        testAgent.setCurrentNode("D");
         RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "talk", "lawful_private");
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("基地"));
@@ -151,7 +150,7 @@ class SandboxSimulationTest {
     @Test
     @DisplayName("阵营私聊: 非本阵营不能发言")
     void testFactionPrivateChatWrongFaction() {
-        testAgent.setCurrentNode("base_aggressive");
+        testAgent.setCurrentNode("B");
         RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "talk", "aggressive_private");
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("阵营不匹配"));
@@ -160,7 +159,7 @@ class SandboxSimulationTest {
     @Test
     @DisplayName("全频道: 任何位置都可以发言")
     void testPublicChatAnywhere() {
-        testAgent.setCurrentNode("center");
+        testAgent.setCurrentNode("D");
         RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "talk", "public");
         assertTrue(result.isSuccess());
     }
@@ -178,7 +177,7 @@ class SandboxSimulationTest {
     @DisplayName("死亡Agent: 无法执行动作")
     void testDeadAgentCannotAct() {
         testAgent.setAlive(false);
-        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "center");
+        RuleEngine.ActionResult result = ruleEngine.validateAndExecute(testAgent, "move", "D");
         assertFalse(result.isSuccess());
         assertTrue(result.getMessage().contains("死亡"));
     }

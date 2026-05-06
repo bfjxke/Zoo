@@ -28,7 +28,7 @@ public class Agent {
     private Integer satiety = 100;
 
     @Column(nullable = false)
-    private Integer health = 100;
+    private Integer health = 90;
 
     @Column(nullable = false)
     private String currentNode;
@@ -63,11 +63,11 @@ public class Agent {
     }
 
     public boolean isFatigued() {
-        return stamina < 20;
+        return stamina < GameConstants.FATIGUE_THRESHOLD;
     }
 
     public boolean isHungry() {
-        return satiety < 30;
+        return satiety < GameConstants.HUNGER_THRESHOLD;
     }
 
     public boolean isDead() {
