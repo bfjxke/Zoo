@@ -56,8 +56,21 @@ backend/
 │   │   │       │   ├── RuleEngine.java               # 规则验证引擎 ★核心
 │   │   │       │   ├── TickScheduler.java            # Tick调度器
 │   │   │       │   ├── PythonDispatcher.java        # Python调度器
+│   │   │       │   ├── SimulationScheduler.java      # Agent决策调度器
+│   │   │       │   ├── PersonalityService.java      # 性格词条服务
 │   │   │       │   └── WebSocketPushService.java    # WebSocket推送
-│   │   │       └── repository/                        # 数据库访问层
+│   │   │       ├── logger/                          # 日志处理（Phase 3）
+│   │   │       │   ├── LogHandler.java              # 责任链处理器接口 ★
+│   │   │       │   ├── ConsoleHandler.java          # 控制台输出
+│   │   │       │   ├── FileHandler.java            # 文件输出
+│   │   │       │   ├── ViolationHandler.java       # 违规日志分离
+│   │   │       │   ├── AuditLogger.java            # 审计日志主类
+│   │   │       │   └── LogEntry.java              # 日志条目
+│   │   │       └── observer/                        # 观察者模式（Phase 3）
+│   │   │           ├── GameObserver.java           # 观察者接口 ★
+│   │   │           ├── GameNotifier.java           # 通知中心 ★
+│   │   │           ├── WebSocketObserver.java      # WebSocket推送
+│   │   │           └── DatabaseObserver.java       # 数据库持久化
 │   │   └── resources/
 │   │       └── application.yml                       # Spring配置文件
 │   └── test/                                         # 测试代码
@@ -66,6 +79,20 @@ backend/
 ├── pom.xml                                          # Maven依赖配置
 └── mvnw                                              # Maven Wrapper脚本
 ```
+
+### Phase 3新增模块说明
+
+#### logger/ - 责任链模式（Phase 3 Sprint 2）
+- **LogHandler.java** - 处理器接口，定义handle()和setNext()方法
+- **ConsoleHandler.java** - 将日志输出到控制台
+- **FileHandler.java** - 将日志写入文件
+- **ViolationHandler.java** - 将违规日志分离写入violation.log
+
+#### observer/ - 观察者模式（Phase 3 Sprint 4）
+- **GameObserver.java** - 观察者接口，定义onTickComplete()等方法
+- **GameNotifier.java** - 通知中心，维护观察者列表，广播状态变化
+- **WebSocketObserver.java** - 通过WebSocket向前端推送状态
+- **DatabaseObserver.java** - 将状态变化持久化到数据库
 
 ### 各模块职责详解
 
@@ -265,40 +292,57 @@ frontend/
 
 ## 五、文档目录详解 (docs/)
 
+### 当前目录结构
+
 ```
 docs/
-├── rules.md                   # 游戏规则白皮书 ★核心规则文档
-├── PROJECT_STRUCTURE.md       # 项目结构说明（本文件）
-├── FEATURE_MEMO.md            # 功能备忘录（待实现功能）
-├── CHANGELOG.md               # 改动日志（版本记录）
-└── map.md                     # 地图可视化 ★直观展示
+├── core/                      # 核心文档
+│   ├── rules.md              # 游戏规则白皮书 ★核心规则文档
+│   ├── PROJECT_STRUCTURE.md   # 项目结构说明（本文件）
+│   └── ARCHITECTURE.md       # 架构设计建议
+│
+├── changelog/                 # 版本变更记录
+│   ├── CHANGELOG.md         # v1.1改动记录
+│   ├── CHANGE_LOG.md        # Phase 2变更记录
+│   └── CHANGELOG_v2.md      # v2.0修复记录
+│
+├── roadmap/                   # 远期规划
+│   ├── FUTURE_ROADMAP.md     # Phase 4-6详细规划
+│   └── FEATURE_MEMO.md      # 待实现功能点子
+│
+├── reference/                 # 参考文档
+│   └── map.md               # ASCII地图可视化
+│
+└── v2_glassmorphism/        # v2.0玻璃态升级（历史文档）
+    ├── FINAL_SUMMARY.md
+    ├── IMPLEMENTATION_SUMMARY.md
+    └── TEST_REPORT.md
 ```
+
+### 各目录职责
+
+| 目录 | 内容 | 重要性 |
+|------|------|--------|
+| **core/** | 核心文档（规则、结构、架构） | ★★★★★ |
+| **changelog/** | 版本详细变更记录 | ★★★★ |
+| **roadmap/** | 远期规划和待实现功能 | ★★★★ |
+| **reference/** | 参考文档（地图等） | ★★★ |
+| **v2_glassmorphism/** | 历史版本文档 | ★★ |
+
+### 核心文档说明
 
 **rules.md** - 游戏规则白皮书
 - 包含所有游戏规则的详细说明
 - 数值配置、消耗公式、状态判定
 - 是项目的"规则宪法"
 
----
+**FUTURE_ROADMAP.md** - 远期规划
+- Phase 4-6的详细实现规划
+- 技术方案选择和预估工作量
 
-## 五、docs/ 文档目录详解
-
-```
-docs/
-├── rules.md                   # 游戏规则白皮书 ★核心规则文档
-├── PROJECT_STRUCTURE.md       # 项目结构说明（本文件）
-└── FEATURE_MEMO.md            # 功能备忘录（待实现功能清单）
-```
-
-### 各文档职责
-
-| 文档 | 内容 | 重要性 |
-|------|------|--------|
-| rules.md | 游戏所有规则、数值、计算公式的详细说明 | ★★★★★ |
-| CHANGELOG.md | 版本改动记录、代码改动清单 | ★★★★★ |
-| PROJECT_STRUCTURE.md | 目录结构、技术选型、数据流图 | ★★★★ |
-| map.md | ASCII地图可视化，直观展示 | ★★★★ |
-| FEATURE_MEMO.md | 用户提出的点子、待实现功能、下一步计划 | ★★★ |
+**FEATURE_MEMO.md** - 功能备忘录
+- 用户提出的待实现功能点子
+- 每个功能的预计阶段和设计建议
 
 ---
 
