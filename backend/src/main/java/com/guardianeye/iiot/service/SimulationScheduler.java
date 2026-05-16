@@ -146,6 +146,8 @@ public class SimulationScheduler {
             agentData.put("current_node", agent.getCurrentNode());
             agentData.put("alive", agent.getAlive());
             agentData.put("personality", agent.getPersonality());
+            agentData.put("carried_food", agent.getCarriedFood() != null ? agent.getCarriedFood() : 0);
+            agentData.put("confinement_ticks", agent.getConfinementTicks() != null ? agent.getConfinementTicks() : 0);
             agentsList.add(agentData);
             
             requestBody.put("agents", agentsList);

@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import decide, health
+from routers import decide, health, judge
 
 app = FastAPI(title="GuardianEye-IIoT Agent Dispatcher", version="0.1.0")
 
@@ -13,6 +13,7 @@ app.add_middleware(
 )
 
 app.include_router(decide.router, prefix="/decide", tags=["decision"])
+app.include_router(judge.router, prefix="/judge", tags=["judge"])
 app.include_router(health.router, tags=["health"])
 
 

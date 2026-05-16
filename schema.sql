@@ -32,6 +32,9 @@ CREATE TABLE agents (
     death_ticks_remaining INT DEFAULT 0 COMMENT '复活倒计时',
     personality VARCHAR(100) COMMENT '性格词条',
     tick_count INT DEFAULT 0 COMMENT '已存活回合数',
+    carried_food INT DEFAULT 0 COMMENT '携带食物数量',
+    confinement_ticks INT DEFAULT 0 COMMENT '禁闭剩余轮数',
+    confinement_reason VARCHAR(100) COMMENT '禁闭原因',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     
@@ -178,6 +181,8 @@ CREATE TABLE game_state (
     order_declaration_active BOOLEAN DEFAULT FALSE COMMENT '秩序宣言是否激活',
     last_declaration_tick INT DEFAULT 0 COMMENT '上次宣言回合',
     declaration_cooldown INT DEFAULT 10 COMMENT '宣言冷却回合数',
+    food_inventory_json TEXT COMMENT '阵营食物库存JSON',
+    food_drop_locations_json TEXT COMMENT '场景食物掉落JSON',
     
     INDEX idx_running (running) COMMENT '运行状态索引'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='游戏状态表';

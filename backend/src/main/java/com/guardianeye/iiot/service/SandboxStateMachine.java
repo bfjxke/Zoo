@@ -47,6 +47,12 @@ public class SandboxStateMachine {
             gs.setOrderDeclarationActive(false);
             gs.setLastDeclarationTick(0);
             gs.setLastTickTime(LocalDateTime.now());
+            gs.setFoodInventory(java.util.Map.of(
+                "lawful", 20,
+                "aggressive", 20,
+                "neutral", 20
+            ));
+            gs.setFoodDropLocations(new java.util.HashMap<>());
             return gameStateRepository.save(gs);
         }
         return getOrCreateGameState();
@@ -87,12 +93,35 @@ public class SandboxStateMachine {
         // 阶段2.5: 检查和平结局
         checkPeaceEnding(gameState);
 
+        // 阶段2.6: 空投物资（每11轮）
+        performAirdrop(gameState);
+
         // 阶段3: 保存游戏状态
         gameStateRepository.save(gameState);
         log.info("========== [Tick #{}] 结算完成 ==========", tick);
     }
 
+    private void performAirdrop(GameState gameState) {
+        if (gameState.getCurrentTick() > 0 && gameState.getCurrentTick() % 11 == 0) {
+            gameState.dropFood("D", 30);
+            gameState.dropFood("E", 30);
+            log.info("[空投] 第{}轮空投物资：D节点+30份，E节点+30份", gameState.getCurrentTick());
+        }
+    }
+
     private void applyPassiveConsumption(Agent agent, int tick) {
+        if (agent.isConfined()) {
+            agent.setConfinementTicks(agent.getConfinementTicks() - 1);
+            logAction(tick, agent.getName(), agent.getFaction(), "CONFINED",
+                    "禁闭中，剩余" + agent.getConfinementTicks() + "轮", null, null);
+            if (!agent.isConfined()) {
+                logAction(tick, agent.getName(), agent.getFaction(), "CONFINED_END",
+                        "禁闭结束", null, null);
+            }
+            agent.setTickCount(tick);
+            return;
+        }
+
         if (tick % 3 == 0) {
             agent.setSatiety(Math.max(0, (int)(agent.getSatiety() - GameConstants.SATIETY_BASE_COST)));
         }
@@ -121,10 +150,27 @@ public class SandboxStateMachine {
         }
 
         if (agent.isDead()) {
+            int droppedFood = agent.getCarriedFood();
+            String currentNode = agent.getCurrentNode();
+            GameState gs = getOrCreateGameState();
+            
+            if (droppedFood > 0) {
+                gs.dropFood(currentNode, droppedFood);
+                log.info("[食物掉落] {} 在 {} 掉落{}份食物", agent.getName(), currentNode, droppedFood);
+            }
+            
+            agent.setCarriedFood(0);
             agent.setAlive(false);
             agent.setDeathTicksRemaining(GameConstants.RESPAWN_TICKS);
             String baseNode = GameConstants.getFactionBaseNode(agent.getFaction());
             agent.setCurrentNode(baseNode);
+            
+            if (gs.getOrderSwordHolderId() != null && gs.getOrderSwordHolderId().equals(agent.getId())) {
+                gs.setOrderSwordLocation(currentNode);
+                gs.setOrderSwordHolderId(null);
+                log.info("[秩序之剑] {} 死亡，剑掉落在{}", agent.getName(), currentNode);
+            }
+            
             logAction(tick, agent.getName(), agent.getFaction(), "DEATH",
                     "健康归零，进入死亡复活流程，复活位置: " + baseNode, null, null);
         }

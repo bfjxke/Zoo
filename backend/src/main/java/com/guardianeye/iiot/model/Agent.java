@@ -51,6 +51,15 @@ public class Agent {
     @Column
     private String personality;
     
+    @Column(nullable = false)
+    private Integer carriedFood = 0;
+    
+    @Column(nullable = false)
+    private Integer confinementTicks = 0;
+    
+    @Column
+    private String confinementReason;
+    
     public String getPersonalityName() {
         if (personality == null) return "普通";
         PersonalityTraits trait = PersonalityTraits.getById(personality);
@@ -74,6 +83,10 @@ public class Agent {
         return health <= 0;
     }
 
+    public boolean isConfined() {
+        return confinementTicks > 0;
+    }
+    
     public void applyFatigueMultiplier() {
         if (isFatigued()) {
             fatigued = true;

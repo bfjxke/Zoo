@@ -1,0 +1,7 @@
+# LangChain/LangGraph依赖
+# Phase 5.5 Agent架构重构
+
+langchain-core>=0.1.0
+langchain-community>=0.0.20
+langgraph>=0.0.20
+langsmith>=0.1.0

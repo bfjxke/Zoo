@@ -33,12 +33,12 @@ public final class GameConstants {
     public static final int TICK_INTERVAL_SECONDS = 30;
 
     /**
-     * 最大游戏回合数：50回合
+     * 最大游戏回合数：60回合
      *
-     * 当游戏达到50回合时触发"永无止境结局"
-     * 50回合约等于25分钟的游戏时长
+     * 当游戏达到60回合时触发"永无止境结局"
+     * 60回合约等于30分钟的游戏时长
      */
-    public static final int MAX_GAME_TICKS = 50;
+    public static final int MAX_GAME_TICKS = 60;
 
     /**
      * 秩序之剑生成回合：40回合
@@ -137,13 +137,13 @@ public final class GameConstants {
     public static final int SATIETY_BASE_COST = 5;
 
     /**
-     * 进食恢复饱食度：30点/次
+     * 进食恢复饱食度：40点/次
      *
-     * 一份食物恢复30点饱食度
-     * 从0吃到100需要吃4份食物
-     * 从100吃到140需要再吃2份食物
+     * 一份食物恢复40点饱食度
+     * 从0吃到100需要吃3份食物
+     * 从100吃到140需要再吃1份食物
      */
-    public static final int SATIETY_EAT_RECOVER = 30;
+    public static final int SATIETY_EAT_RECOVER = 40;
 
     // ========================================================================
     // 第四部分：生命值系统
@@ -302,8 +302,13 @@ public final class GameConstants {
      * - provoke：挑衅（v1.1新增）
      */
     public static final Set<String> ALLOWED_ACTIONS = Set.of(
-            "move", "eat", "rest", "talk", "trade", "provoke"
+            "move", "eat", "rest", "talk", "trade", "provoke",
+            "claim_food", "pickup_food", "steal"
     );
+
+    public static final int MAX_CARRIED_FOOD = 20;
+    public static final int STEAL_AMOUNT = 3;
+    public static final int STEAL_CATCH_CONFINEMENT = 3;
 
     // ========================================================================
     // 第九部分：地图节点

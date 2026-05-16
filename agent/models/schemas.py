@@ -11,6 +11,8 @@ class AgentState(BaseModel):
     satiety: int
     health: int
     current_node: str
+    carried_food: int = 0
+    confinement_ticks: int = 0
 
 
 class DecisionRequest(BaseModel):

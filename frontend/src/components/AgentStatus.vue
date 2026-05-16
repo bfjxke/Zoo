@@ -35,6 +35,15 @@
     <div class="agent-node">
       位置: {{ agent.currentNode }}
     </div>
+    <div class="agent-food" v-if="agent.carriedFood > 0">
+      <span class="food-icon">🍖</span>
+      <span>携带: {{ agent.carriedFood }}</span>
+    </div>
+    <div class="agent-confined" v-if="agent.confinementTicks > 0">
+      <span class="confined-icon">🔒</span>
+      <span>禁闭: {{ agent.confinementTicks }}轮</span>
+      <span class="confined-reason">({{ agent.confinementReason || '违反规则' }})</span>
+    </div>
   </div>
 </template>
 
@@ -135,4 +144,33 @@ export default {
 .progress-fill.stamina { background: #1890ff; }
 .progress-fill.satiety { background: #faad14; }
 .progress-fill.health { background: #52c41a; }
+
+.agent-food {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: #fff7e6;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #fa8c16;
+}
+
+.agent-confined {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: #fff1f0;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #f5222d;
+}
+
+.confined-reason {
+  font-size: 10px;
+  color: #8c8c8c;
+}
 </style>

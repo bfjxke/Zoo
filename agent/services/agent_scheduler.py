@@ -44,7 +44,7 @@ SYSTEM_PROMPT_JUDGE = """你是GuardianEye-IIoT沙箱动物园中的AI判官。
 AVAILABLE_NODES = ["A", "B", "C", "D", "E", "F", "G", "H"]
 
 
-def select_model_for_agent(agent: Dict[str, Any], special_agents: List[str]) -> str:
+def select_model_for_agent(agent, special_agents: List[str]) -> str:
     """
     根据Agent类型选择合适的模型
 
@@ -54,27 +54,30 @@ def select_model_for_agent(agent: Dict[str, Any], special_agents: List[str]) -> 
     - aggressive/neutral各随机一个：标准模型 m2.7
     - 剩下的所有Agent（动物）：角色扮演模型 m2-her
     """
-    agent_name = agent.name  # 获取Agent名称
-    agent_role = agent.role  # 获取Agent角色
-    agent_faction = agent.faction  # 获取Agent阵营
+    agent_name = getattr(agent, "name", None) or agent.get("name") if isinstance(agent, dict) else None
+    agent_role = getattr(agent, "role", None) or agent.get("role") if isinstance(agent, dict) else None
+    agent_faction = getattr(agent, "faction", None) or agent.get("faction") if isinstance(agent, dict) else None
+
+    if agent_name is None:
+        return MODEL_ROLEPLAY
 
     if agent_role == "judge":  # 如果是裁判
         print(f"[模型选择] {agent_name} (裁判) -> {MODEL_STANDARD}")
-        return MODEL_STANDARD  # 使用标准模型
+        return MODEL_STANDARD
 
     if agent_role == "leader" and agent_faction == "lawful":  # 如果是守序领袖
         print(f"[模型选择] {agent_name} (守序领袖) -> {MODEL_STANDARD}")
-        return MODEL_STANDARD  # 使用标准模型
+        return MODEL_STANDARD
 
     if agent_name in special_agents:  # 如果是特殊Agent
         print(f"[模型选择] {agent_name} (特殊Agent) -> {MODEL_STANDARD}")
-        return MODEL_STANDARD  # 使用标准模型
+        return MODEL_STANDARD
 
     print(f"[模型选择] {agent_name} (动物Agent) -> {MODEL_ROLEPLAY}")
     return MODEL_ROLEPLAY  # 其他Agent使用角色扮演模型
 
 
-def select_special_agents(agents: List[Dict[str, Any]]) -> List[str]:
+def select_special_agents(agents):
     """
     从非守序阵营各随机选择一个Agent使用标准模型
 
@@ -84,16 +87,23 @@ def select_special_agents(agents: List[Dict[str, Any]]) -> List[str]:
     """
     special = []  # 初始化特殊Agent列表
 
-    aggressive_agents = [a for a in agents if a.faction == "aggressive" and a.role != "leader"]  # 获取攻击性阵营的非领袖Agent
-    neutral_agents = [a for a in agents if a.faction == "neutral" and a.role != "leader"]  # 获取中立阵营的非领袖Agent
+    def get_attr(a, key):
+        return getattr(a, key, None) or a.get(key) if isinstance(a, dict) else None
+
+    aggressive_agents = [a for a in agents if get_attr(a, "faction") == "aggressive" and get_attr(a, "role") != "leader"]
+    neutral_agents = [a for a in agents if get_attr(a, "faction") == "neutral" and get_attr(a, "role") != "leader"]
 
     if aggressive_agents:  # 如果有攻击性阵营Agent
         selected = random.choice(aggressive_agents)  # 随机选择一个
-        special.append(selected.name)  # 添加到特殊列表
+        name = get_attr(selected, "name")
+        if name:
+            special.append(name)
 
     if neutral_agents:  # 如果有中立阵营Agent
         selected = random.choice(neutral_agents)  # 随机选择一个
-        special.append(selected.name)  # 添加到特殊列表
+        name = get_attr(selected, "name")
+        if name:
+            special.append(name)
 
     print(f"[特殊Agent] 使用标准模型的Agent: {special}")
     return special  # 返回特殊Agent列表

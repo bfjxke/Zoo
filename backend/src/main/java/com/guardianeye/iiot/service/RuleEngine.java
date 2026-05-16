@@ -3,26 +3,23 @@ package com.guardianeye.iiot.service;
 import com.guardianeye.iiot.model.Agent;
 import com.guardianeye.iiot.model.GameConstants;
 import com.guardianeye.iiot.model.GameState;
+import com.guardianeye.iiot.model.AgentRepository;
+import com.guardianeye.iiot.model.GameStateRepository;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.Set;
-import java.util.List;
-import java.util.Optional;
-import com.guardianeye.iiot.model.AgentRepository;
-
 @Service
 @Slf4j
 public class RuleEngine {
 
-    // AgentRepository用于查询Agent信息，支持秩序之剑持有者查询
     private final AgentRepository agentRepository;
+    private final GameStateRepository gameStateRepository;
     
-    // 构造函数注入AgentRepository
-    public RuleEngine(AgentRepository agentRepository) {
+    public RuleEngine(AgentRepository agentRepository, GameStateRepository gameStateRepository) {
         this.agentRepository = agentRepository;
+        this.gameStateRepository = gameStateRepository;
     }
 
     @Data
@@ -69,6 +66,9 @@ public class RuleEngine {
             case "talk" -> executeTalk(agent, target);
             case "trade" -> executeTrade(agent, target, penalty);
             case "provoke" -> executeProvoke(agent, target);
+            case "claim_food" -> executeClaimFood(agent);
+            case "pickup_food" -> executePickupFood(agent);
+            case "steal" -> executeSteal(agent, target);
             default -> new ActionResult(false, "未知动作: " + action, null, null);
         };
     }
@@ -132,7 +132,7 @@ public class RuleEngine {
     }
 
     private ActionResult executeEat(Agent agent) {
-        log.info("[规则引擎-EAT] 开始执行进食 - 当前饱食:{}", agent.getSatiety());
+        log.info("[规则引擎-EAT] 开始执行进食 - 当前饱食:{}, 携带:{}", agent.getSatiety(), agent.getCarriedFood());
         
         if (agent.getSatiety() >= GameConstants.SATIETY_MAX_WITH_BUFF) {
             log.warn("[规则引擎-EAT] <<< 饱食度已满({})，无法继续进食", agent.getSatiety());
@@ -140,19 +140,148 @@ public class RuleEngine {
                     "饱食度已满(" + agent.getSatiety() + ")，无法继续进食", null, null);
         }
 
-        int recover = GameConstants.SATIETY_EAT_RECOVER;
-        int oldSatiety = agent.getSatiety();
-        int newSatiety = Math.min(GameConstants.SATIETY_MAX_WITH_BUFF, oldSatiety + recover);
-        agent.setSatiety(newSatiety);
+        // 先吃携带的食物
+        if (agent.getCarriedFood() > 0) {
+            agent.setCarriedFood(agent.getCarriedFood() - 1);
+            int recover = GameConstants.SATIETY_EAT_RECOVER;
+            int oldSatiety = agent.getSatiety();
+            int newSatiety = Math.min(GameConstants.SATIETY_MAX_WITH_BUFF, oldSatiety + recover);
+            agent.setSatiety(newSatiety);
 
-        String buffMsg = "";
-        if (oldSatiety <= GameConstants.SATIETY_BUFF_THRESHOLD && newSatiety > GameConstants.SATIETY_BUFF_THRESHOLD) {
-            buffMsg = " 【触发饱餐Buff：耐力恢复加速50%】";
+            String buffMsg = "";
+            if (oldSatiety <= GameConstants.SATIETY_BUFF_THRESHOLD && newSatiety > GameConstants.SATIETY_BUFF_THRESHOLD) {
+                buffMsg = " 【触发饱餐Buff：耐力恢复加速50%】";
+            }
+
+            log.info("[规则引擎-EAT] <<< 吃携带食物成功 饱食+{} {} -> {} {}", recover, oldSatiety, newSatiety, buffMsg);
+            return new ActionResult(true,
+                    "吃携带食物，饱食+" + recover + "，" + oldSatiety + " -> " + newSatiety + buffMsg, null, null);
         }
 
-        log.info("[规则引擎-EAT] <<< 进食成功 {} -> {} {}", oldSatiety, newSatiety, buffMsg);
-        return new ActionResult(true,
-                "进食恢复饱食 +" + recover + "，" + oldSatiety + " -> " + newSatiety + buffMsg, null, null);
+        // 没有携带食物，尝试从营地库存吃
+        GameState gs = getGameState();
+        String faction = agent.getFaction();
+        
+        if (gs.consumeFactionFood(faction, 1)) {
+            int recover = GameConstants.SATIETY_EAT_RECOVER;
+            int oldSatiety = agent.getSatiety();
+            int newSatiety = Math.min(GameConstants.SATIETY_MAX_WITH_BUFF, oldSatiety + recover);
+            agent.setSatiety(newSatiety);
+
+            String buffMsg = "";
+            if (oldSatiety <= GameConstants.SATIETY_BUFF_THRESHOLD && newSatiety > GameConstants.SATIETY_BUFF_THRESHOLD) {
+                buffMsg = " 【触发饱餐Buff：耐力恢复加速50%】";
+            }
+
+            log.info("[规则引擎-EAT] <<< 从营地库存进食成功 库存-1，饱食+{} {} -> {} {}", recover, oldSatiety, newSatiety, buffMsg);
+            return new ActionResult(true,
+                    "从营地库存吃食物，饱食+" + recover + "，" + oldSatiety + " -> " + newSatiety + buffMsg, null, null);
+        }
+
+        log.warn("[规则引擎-EAT] <<< 营地库存为空，无法进食");
+        return new ActionResult(false, "营地库存为空，无法进食", null, null);
+    }
+
+    private GameState getGameState() {
+        List<GameState> states = gameStateRepository.findAll();
+        if (states.isEmpty()) {
+            log.warn("[规则引擎] 游戏状态未初始化");
+            return null;
+        }
+        return states.get(0);
+    }
+    
+    private ActionResult executeClaimFood(Agent agent) {
+        String baseNode = GameConstants.getFactionBaseNode(agent.getFaction());
+        if (!agent.getCurrentNode().equals(baseNode)) {
+            return new ActionResult(false, "领取食物必须在阵营基地，当前在" + agent.getCurrentNode(), null, null);
+        }
+        
+        if (agent.getCarriedFood() >= GameConstants.MAX_CARRIED_FOOD) {
+            return new ActionResult(false, "携带食物已达上限(" + GameConstants.MAX_CARRIED_FOOD + ")", null, null);
+        }
+        
+        GameState gs = getGameState();
+        if (gs == null || gs.getFactionFood(agent.getFaction()) <= 0) {
+            return new ActionResult(false, "营地库存为空", null, null);
+        }
+        
+        gs.consumeFactionFood(agent.getFaction(), 1);
+        agent.setCarriedFood(agent.getCarriedFood() + 1);
+        
+        return new ActionResult(true, "从营地领取1份食物，携带量:" + agent.getCarriedFood(), null, null);
+    }
+    
+    private ActionResult executePickupFood(Agent agent) {
+        int foodAtNode = 0;
+        GameState gs = getGameState();
+        if (gs != null) {
+            foodAtNode = gs.getFoodAtNode(agent.getCurrentNode());
+        }
+        
+        if (foodAtNode <= 0) {
+            return new ActionResult(false, "当前位置没有食物", null, null);
+        }
+        
+        if (agent.getCarriedFood() >= GameConstants.MAX_CARRIED_FOOD) {
+            return new ActionResult(false, "携带食物已达上限(" + GameConstants.MAX_CARRIED_FOOD + ")", null, null);
+        }
+        
+        gs.pickupFood(agent.getCurrentNode(), 1);
+        agent.setCarriedFood(agent.getCarriedFood() + 1);
+        
+        return new ActionResult(true, "捡起1份食物，携带量:" + agent.getCarriedFood(), null, null);
+    }
+    
+    private ActionResult executeSteal(Agent agent, String targetFaction) {
+        String agentFaction = agent.getFaction();
+        String targetF = targetFaction != null ? targetFaction : getOtherFaction(agentFaction);
+        
+        if (targetF == null || targetF.equals(agentFaction)) {
+            return new ActionResult(false, "偷窃目标阵营无效", null, null);
+        }
+        
+        String targetBase = GameConstants.getFactionBaseNode(targetF);
+        if (!agent.getCurrentNode().equals(targetBase)) {
+            return new ActionResult(false, "偷窃必须在对方营地，当前在" + agent.getCurrentNode(), null, null);
+        }
+        
+        // 检查是否有其他阵营的人在场
+        List<Agent> agentsHere = agentRepository.findAll().stream()
+            .filter(a -> a.getAlive() && a.getCurrentNode().equals(targetBase))
+            .toList();
+        
+        boolean hasEnemy = agentsHere.stream().anyMatch(a -> !a.getFaction().equals(agentFaction) && !a.getFaction().equals(targetF));
+        
+        if (hasEnemy) {
+            // 被抓到，关禁闭
+            agent.setConfinementTicks(GameConstants.STEAL_CATCH_CONFINEMENT);
+            agent.setConfinementReason("偷窃被抓");
+            log.warn("[规则引擎-STEAL] <<< {} 在{}偷窃被抓，关禁闭{}轮", 
+                agent.getName(), targetBase, GameConstants.STEAL_CATCH_CONFINEMENT);
+            return new ActionResult(false, "偷窃被抓，关禁闭" + GameConstants.STEAL_CATCH_CONFINEMENT + "轮", "STEAL_CAUGHT", null);
+        }
+        
+        GameState gs = getGameState();
+        if (gs == null || gs.getFactionFood(targetF) <= 0) {
+            return new ActionResult(false, "目标营地库存为空", null, null);
+        }
+        
+        int stealAmount = Math.min(GameConstants.STEAL_AMOUNT, gs.getFactionFood(targetF));
+        gs.consumeFactionFood(targetF, stealAmount);
+        agent.setCarriedFood(Math.min(GameConstants.MAX_CARRIED_FOOD, agent.getCarriedFood() + stealAmount));
+        
+        log.info("[规则引擎-STEAL] <<< {} 从{}偷窃{}份食物成功", agent.getName(), targetF, stealAmount);
+        return new ActionResult(true, "偷窃" + targetF + "阵营" + stealAmount + "份食物，携带量:" + agent.getCarriedFood(), null, null);
+    }
+    
+    private String getOtherFaction(String faction) {
+        return switch (faction) {
+            case "lawful" -> "aggressive";
+            case "aggressive" -> "lawful";
+            case "neutral" -> "lawful";
+            default -> null;
+        };
     }
 
     private ActionResult executeRest(Agent agent, double penalty) {
