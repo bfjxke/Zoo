@@ -58,25 +58,7 @@ private Map<String, Integer> foodInventory;  // 阵营 -> 库存
 - 携带数量有限（如最多3份）
 - 死亡时食物掉落
 
----
 
-### 1.3 强势方优势机制
-
-**来源**：用户讨论（2026-04-16）
-**预计阶段**：Phase 4或Phase 5
-
-**功能描述**：
-- 强势阵营拥有某些天然优势
-- 例如：更强壮（耐力消耗减少）、更抗饿（饥饿扣血减少）
-
-**设计建议**：
-```java
-public static final Map<String, Double> FACTION_STAMINA_MODIFIER = Map.of(
-    "lawful", 1.0,
-    "aggressive", 0.9,
-    "neutral", 1.0
-);
-```
 
 ---
 
@@ -87,8 +69,7 @@ public static final Map<String, Double> FACTION_STAMINA_MODIFIER = Map.of(
 
 **功能描述**：
 - 引导两个弱势阵营联合对抗强势方
-- 例如：联合buff（同时在场的同阵营Agent恢复加速）
-- 或者：联合技能（两方配合执行复杂动作）
+- 例如：联合技能（两方配合执行复杂动作）
 
 ---
 

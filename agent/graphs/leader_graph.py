@@ -1,5 +1,14 @@
+import json
+from typing import TypedDict, Optional, List, Dict, Any
+
 from langgraph.graph import StateGraph, END
-from typing import TypedDict
+from langchain_core.messages import HumanMessage
+
+from .shared_state import AgentState
+from services.minimax_chat_model import create_minimax_chat_model
+from prompts.leader_prompt import get_leader_prompt
+from graphs.memory_manager import GlobalMemoryStore
+
 
 class LeaderGraphState(TypedDict):
     agent_state: AgentState
@@ -8,150 +17,143 @@ class LeaderGraphState(TypedDict):
     plan: str
     reasoning: str
     action: str
-    target: str
+    target: Optional[str]
     result: str
+    memory_text: str
+    logs_text: str
+
+
+def _build_context(agent_state: AgentState) -> Dict[str, Any]:
+    memory_mgr = GlobalMemoryStore.get_instance().get_or_create_memory(agent_state.agent_id)
+    recent = memory_mgr.get_recent_memories(5)
+    memory_text = "\n".join([
+        f"- Tick {m.get('tick', '?')}: {m.get('content', '')}"
+        for m in recent
+    ]) if recent else "（无记忆）"
+
+    logs_text = "\n".join(agent_state.recent_logs[-3:]) if agent_state.recent_logs else "（无日志）"
+
+    return {
+        "personality": agent_state.personality,
+        "stamina": agent_state.stamina,
+        "satiety": agent_state.satiety,
+        "health": agent_state.health,
+        "current_node": agent_state.current_node,
+        "carried_food": getattr(agent_state, "carried_food", 0) or 0,
+        "confinement_ticks": getattr(agent_state, "confinement_ticks", 0) or 0,
+        "tick": agent_state.tick,
+        "memory": memory_text,
+        "recent_count": min(5, len(recent)),
+        "recent_logs": logs_text,
+    }
 
 
 def observe_node(state: LeaderGraphState) -> LeaderGraphState:
     agent_state = state["agent_state"]
-    memory = agent_state.memory
-    recent_logs = agent_state.recent_logs
-    
-    carried_food = getattr(agent_state, "carried_food", 0) or 0
-    confinement_ticks = getattr(agent_state, "confinement_ticks", 0) or 0
-    
-    observation_text = f"""【观察】当前状态：
-- Agent: {agent_state.agent_name} ({agent_state.agent_faction})
-- 性格: {agent_state.personality}
-- 位置: {agent_state.current_node}
-- 耐力: {agent_state.stamina}/100
-- 饱食: {agent_state.satiety}/140
-- 健康: {agent_state.health}/90
-- 携带食物: {carried_food}
-- 围困状态: {confinement_ticks}轮
+    ctx = _build_context(agent_state)
 
-【上下文】
-记忆数量: {len(memory)}
-最近日志: {len(recent_logs)}
-游戏回合: {agent_state.tick}"""
-    
-    return {"observation": observation_text}
+    observation = (
+        f"【观察】{agent_state.agent_name}({agent_state.agent_faction}) "
+        f"位置={agent_state.current_node} "
+        f"耐力={agent_state.stamina} 饱食={agent_state.satiety} "
+        f"健康={agent_state.health} 携带={ctx['carried_food']} "
+        f"围困={ctx['confinement_ticks']}轮 回合={agent_state.tick}"
+    )
+
+    return {
+        "observation": observation,
+        "memory_text": ctx["memory"],
+        "logs_text": ctx["recent_logs"],
+    }
 
 
-def reason_node(state: LeaderGraphState) -> LeaderGraphState:
+def think_node(state: LeaderGraphState) -> LeaderGraphState:
     agent_state = state["agent_state"]
-    observation = state.get("observation", "")
-    
     confinement_ticks = getattr(agent_state, "confinement_ticks", 0) or 0
-    carried_food = getattr(agent_state, "carried_food", 0) or 0
-    
+
     if confinement_ticks > 0:
-        reflection = f"【反思】{agent_state.agent_name}正处于围困状态，无法执行任何动作。必须等待{confinement_ticks}轮后才能行动。"
-        plan = "【计划】无行动，等待围困结束。"
-        reasoning = f"围困中，不能做任何决策"
-        return {"reflection": reflection, "plan": plan, "reasoning": reasoning}
-    
-    stamina = agent_state.stamina
-    satiety = agent_state.satiety
-    
-    reflection = f"""【反思】
-- 耐力状态: {'良好' if stamina > 50 else '中等' if stamina > 20 else '危险'}
-- 饱食状态: {'饱餐' if satiety > 100 else '良好' if satiety > 50 else '中等' if satiety > 30 else '危险'}
-- 携带食物: {carried_food}份
-- 当前位置: {agent_state.current_node}
+        return {
+            "reflection": f"围困中({confinement_ticks}轮)，无法行动",
+            "plan": "等待围困结束",
+            "reasoning": "围困状态，不能做任何决策",
+        }
 
-【战略思考】
-基于{agent_state.personality}性格，需要综合考虑当前状态和阵营利益。"""
-    
-    return {"reflection": reflection}
+    ctx = _build_context(agent_state)
+    prompt = get_leader_prompt()
+    messages = prompt.format_messages(**ctx)
 
+    llm = create_minimax_chat_model(model="m2.7", temperature=0.7)
+    response = llm.invoke(messages)
 
-def plan_node(state: LeaderGraphState) -> LeaderGraphState:
-    agent_state = state["agent_state"]
-    reflection = state.get("reflection", "")
-    observation = state.get("observation", "")
-    
-    confinement_ticks = getattr(agent_state, "confinement_ticks", 0) or 0
-    
-    if confinement_ticks > 0:
-        plan = "【计划】等待围困结束"
-        return {"plan": plan}
-    
-    stamina = agent_state.stamina
-    satiety = agent_state.satiety
-    carried_food = getattr(agent_state, "carried_food", 0) or 0
-    
-    if satiety < 30:
-        if carried_food > 0:
-            plan = "【计划】优先吃携带的食物恢复饱食度"
-        else:
-            plan = "【计划】前往阵营基地领取食物"
-    elif stamina < 20:
-        plan = "【计划】休息恢复耐力"
-    elif "order_sword" in agent_state.personality.lower():
-        plan = "【计划】寻找秩序之剑位置"
-    else:
-        plan = "【计划】探索中立区域，收集信息"
-    
-    return {"plan": plan}
+    try:
+        decision = json.loads(response.content)
+        reflection = decision.get("reasoning", "LLM推理完成")
+        plan = f"决策: {decision.get('action', 'rest')}"
+    except (json.JSONDecodeError, TypeError):
+        reflection = f"LLM原始回复: {response.content[:200]}"
+        plan = "解析失败，使用降级策略"
+
+    return {
+        "reflection": reflection,
+        "plan": plan,
+    }
 
 
 def act_node(state: LeaderGraphState) -> LeaderGraphState:
     agent_state = state["agent_state"]
-    plan = state.get("plan", "")
-    reflection = state.get("reflection", "")
-    
     confinement_ticks = getattr(agent_state, "confinement_ticks", 0) or 0
-    
+
     if confinement_ticks > 0:
-        action = "confined"
-        target = None
-        result = f"{agent_state.agent_name} 围困中({confinement_ticks}轮)，无法行动"
-        return {"action": action, "target": target, "result": result}
-    
-    stamina = agent_state.stamina
-    satiety = agent_state.satiety
-    carried_food = getattr(agent_state, "carried_food", 0) or 0
-    
-    if satiety < 30:
-        if carried_food > 0:
-            action = "eat"
-            target = None
-        else:
-            action = "claim_food"
-            target = None
-    elif stamina < 20:
+        return {
+            "action": "confined",
+            "target": None,
+            "result": f"{agent_state.agent_name} 围困中({confinement_ticks}轮)，无法行动",
+        }
+
+    ctx = _build_context(agent_state)
+    prompt = get_leader_prompt()
+    messages = prompt.format_messages(**ctx)
+
+    llm = create_minimax_chat_model(model="m2.7", temperature=0.7)
+    response = llm.invoke(messages)
+
+    try:
+        decision = json.loads(response.content)
+        action = decision.get("action", "rest")
+        target = decision.get("target")
+        reasoning = decision.get("reasoning", "")
+    except (json.JSONDecodeError, TypeError):
         action = "rest"
         target = None
-    else:
-        action = "move"
-        target = "center"
-    
-    reasoning = f"{reflection}\n{plan}\n决策: {action}"
-    result = f"{agent_state.agent_name} 长链思考后决策：{action}"
-    
+        reasoning = f"解析失败: {response.content[:100]}"
+
+    memory_mgr = GlobalMemoryStore.get_instance().get_or_create_memory(agent_state.agent_id)
+    memory_mgr.add_memory(
+        tick=agent_state.tick,
+        content=f"决策: {action} -> {target} | {reasoning}",
+        is_important=(action in ("steal", "talk")),
+    )
+
     return {
         "action": action,
         "target": target,
         "reasoning": reasoning,
-        "result": result
+        "result": f"{agent_state.agent_name} 长链推理后决策：{action}",
     }
 
 
 def create_leader_graph():
     graph = StateGraph(LeaderGraphState)
-    
+
     graph.add_node("observe", observe_node)
-    graph.add_node("reason", reason_node)
-    graph.add_node("plan", plan_node)
+    graph.add_node("think", think_node)
     graph.add_node("act", act_node)
-    
+
     graph.set_entry_point("observe")
-    graph.add_edge("observe", "reason")
-    graph.add_edge("reason", "plan")
-    graph.add_edge("plan", "act")
+    graph.add_edge("observe", "think")
+    graph.add_edge("think", "act")
     graph.add_edge("act", END)
-    
+
     return graph.compile()
 
 

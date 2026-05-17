@@ -6,7 +6,7 @@
 > - v1.0: 初始架构
 > - v1.2: Phase 4 资源博弈系统
 > - v2.0: Phase 5 架构升级（策略模式+责任链模式）
-> - **v2.1: 当前版本** - 设计模式完整实现
+> - **v2.2: 当前版本** - Phase 5.5 LangChain/LangGraph Agent架构重构
 
 ---
 
@@ -45,15 +45,31 @@
 └─────────────────────────────────┬───────────────────────────────────────┘
                                   │ REST API
 ┌─────────────────────────────────┴───────────────────────────────────────┐
-│                      Agent服务 (Python FastAPI)                         │
+│                      Agent服务 (Python FastAPI + LangGraph)              │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                    │
 │  │ /decide     │  │ /judge      │  │ /health      │                    │
-│  └──────┬───────┘  └──────────────┘  └──────────────┘                    │
-│         │                                                              │
-│  ┌──────┴──────────────────────────────────────────────────────┐      │
-│  │                 AI决策层 (MiniMax API)                       │      │
-│  │  AgentScheduler │ MiniMaxClient │ RateLimiter               │      │
-│  └───────────────────────────────────────────────────────────────┘      │
+│  └──────┬───────┘  └──────┬───────┘  └──────────────┘                    │
+│         │                 │                                              │
+│  ┌──────┴─────────────────┴──────────────────────────────────┐          │
+│  │              LangGraph 工作流层                             │          │
+│  │  ┌────────────┐  ┌────────────┐  ┌────────────┐           │          │
+│  │  │LeaderGraph │  │SoldierGraph│  │ JudgeGraph │           │          │
+│  │  │observe→think│  │  decide   │  │   judge    │           │          │
+│  │  │   →act     │  │           │  │            │           │          │
+│  │  └─────┬──────┘  └─────┬──────┘  └─────┬──────┘           │          │
+│  └────────┼───────────────┼───────────────┼──────────────────┘          │
+│           │               │               │                              │
+│  ┌────────┴───────────────┴───────────────┴──────────────────┐          │
+│  │              LangChain 基础组件层                           │          │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │          │
+│  │  │MiniMaxChat   │  │PromptTemplate│  │  @tool Tools │     │          │
+│  │  │Model适配器   │  │(ChatPrompt)  │  │ (8个动作)    │     │          │
+│  │  └──────────────┘  └──────────────┘  └──────────────┘     │          │
+│  │  ┌──────────────┐  ┌──────────────┐                       │          │
+│  │  │MemoryManager │  │RateLimiter   │                       │          │
+│  │  │(16轮滚动)    │  │(TokenBucket) │                       │          │
+│  │  └──────────────┘  └──────────────┘                       │          │
+│  └────────────────────────────────────────────────────────────┘          │
 └─────────────────────────────────────────────────────────────────────────┘
                                   │
                                   ▼
@@ -530,3 +546,146 @@ SandboxStateMachine.executeTick()
 * - 责任链模式完整实现（TickPhase）*
 * - GodModeService 服务层分离*
 * - 模块结构详细说明*
+* - Phase 5.5 LangChain/LangGraph Agent架构重构*
+
+---
+
+## 四、Python Agent层架构（Phase 5.5）
+
+### 4.1 整体架构
+
+Python Agent层采用 **LangChain + LangGraph** 架构，实现基于LLM的智能Agent决策系统：
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    FastAPI 路由层                                │
+│  /decide ─→ dispatch_all_agents()                              │
+│  /judge  ─→ judge_action()                                     │
+│  /health ─→ 健康检查                                            │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+┌────────────────────────────┴────────────────────────────────────┐
+│                    调度器层                                      │
+│  agent_scheduler.py                                             │
+│  - _to_agent_state(): 统一Agent状态转换                         │
+│  - _select_graph_for_role(): 角色路由                           │
+│  - make_decision_with_graph(): 核心决策函数                     │
+│  - dispatch_all_agents(): asyncio.gather并发调度                │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+┌────────────────────────────┴────────────────────────────────────┐
+│                 LangGraph 工作流层                               │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │ LeaderGraph (ReAct推理循环)                           │       │
+│  │ observe → think → act → END                           │       │
+│  │  - observe: 收集状态、记忆、日志                       │       │
+│  │  - think:  LLM推理，生成反思和计划                     │       │
+│  │  - act:    LLM决策，生成动作和目标                     │       │
+│  └──────────────────────────────────────────────────────┘       │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │ SoldierGraph (简化决策)                                │       │
+│  │ decide → END                                          │       │
+│  │  - 围困状态短路                                        │       │
+│  │  - LLM角色扮演决策                                     │       │
+│  └──────────────────────────────────────────────────────┘       │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │ JudgeGraph (裁决判定)                                  │       │
+│  │ judge → END                                           │       │
+│  │  - LLM裁决动作合法性                                   │       │
+│  │  - 返回approved/confinement_ticks/success_rate        │       │
+│  └──────────────────────────────────────────────────────┘       │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+┌────────────────────────────┴────────────────────────────────────┐
+│                 LangChain 基础组件层                              │
+│                                                                  │
+│  ┌──────────────────┐  ┌──────────────────┐                     │
+│  │ MiniMaxChatModel │  │ ChatPromptTemplate│                     │
+│  │ (BaseChatModel)  │  │ (3个角色模板)     │                     │
+│  │ m2.7 / m2-her    │  │ + MessagesPlaceholder│                  │
+│  └──────────────────┘  └──────────────────┘                     │
+│                                                                  │
+│  ┌──────────────────┐  ┌──────────────────┐                     │
+│  │ @tool Tools (8个)│  │ MemoryManager    │                     │
+│  │ move/eat/rest/   │  │ (16轮滚动+永久)  │                     │
+│  │ talk/claim/      │  │                  │                     │
+│  │ pickup/steal/    │  │                  │                     │
+│  │ provoke          │  │                  │                     │
+│  └──────────────────┘  └──────────────────┘                     │
+│                                                                  │
+│  ┌──────────────────┐                                           │
+│  │ RateLimiter      │                                           │
+│  │ (TokenBucket)    │                                           │
+│  └──────────────────┘                                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 4.2 模型选择策略
+
+| 角色 | 模型 | Temperature | 说明 |
+|------|------|-------------|------|
+| Leader | m2.7 | 0.7 | 标准推理，适中创造性 |
+| Soldier | m2-her | 0.8 | 角色扮演模型，高创造性 |
+| Judge | m2.7 | 0.3 | 标准推理，低创造性保证公正 |
+
+### 4.3 MiniMax ChatModel适配器
+
+将MiniMax API适配为LangChain标准接口：
+
+```python
+class MiniMaxChatModel(BaseChatModel):
+    model: str = Field(default="m2.7")
+    api_key: str = Field(default_factory=lambda: os.getenv("MINIMAX_API_KEY", ""))
+    
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        # 1. 将LangChain BaseMessage转为MiniMax API格式
+        # 2. 调用MiniMax ChatCompletion API
+        # 3. 返回ChatResult
+```
+
+### 4.4 文件结构
+
+```
+agent/
+├── graphs/                          # LangGraph工作流
+│   ├── __init__.py                 # 导出所有Graph和State
+│   ├── shared_state.py             # AgentState dataclass
+│   ├── leader_graph.py            # 领袖ReAct工作流
+│   ├── soldier_graph.py           # 小兵决策工作流
+│   ├── judge_graph.py             # 判官裁决工作流
+│   └── memory_manager.py          # Memory组件
+│
+├── prompts/                        # LangChain Prompt模板
+│   ├── __init__.py
+│   ├── leader_prompt.py          # 领袖ChatPromptTemplate
+│   ├── soldier_prompt.py         # 小兵ChatPromptTemplate（阵营参数化）
+│   └── judge_prompt.py           # 判官ChatPromptTemplate
+│
+├── tools/                          # LangChain Tool定义
+│   ├── __init__.py
+│   └── action_tools.py            # 8个@tool定义
+│
+├── services/                       # 服务层
+│   ├── agent_scheduler.py         # LangGraph调度器
+│   ├── judge_service.py           # 判官服务
+│   ├── minimax_chat_model.py      # MiniMax适配器
+│   ├── minimax_client.py          # 原始API客户端
+│   ├── rate_limiter.py            # 限流器
+│   ├── async_agent_loop.py        # 异步循环
+│   └── audit_logger.py            # 审计日志
+│
+├── models/                         # 数据模型
+│   └── schemas.py                 # Pydantic模型
+│
+├── routers/                        # FastAPI路由
+│   ├── decide.py                  # 决策路由
+│   ├── judge.py                   # 判官路由
+│   └── health.py                  # 健康检查
+│
+├── main.py                         # FastAPI入口
+├── requirements.txt                # 基础依赖
+└── requirements-langchain.txt      # LangChain依赖
+```
