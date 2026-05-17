@@ -1,605 +1,532 @@
-# GuardianEye-IIoT 沙箱动物园 - 架构设计建议
+# GuardianEye-IIoT 沙箱动物园 - 架构设计文档
 
-> 本文档为架构师提供设计模式应用建议，用于优化当前代码结构和提升系统可扩展性。
+> 本文档描述系统的架构设计、模块关系和设计模式应用。
 >
-> **版本**：v1.0
-> **日期**：2026-04-16
-> **状态**：参考建议，非强制要求
+> **版本历史**：
+> - v1.0: 初始架构
+> - v1.2: Phase 4 资源博弈系统
+> - v2.0: Phase 5 架构升级（策略模式+责任链模式）
+> - **v2.1: 当前版本** - 设计模式完整实现
 
 ---
 
-## 一、当前系统问题分析
+## 一、系统架构概览
 
-### 1.1 SandboxStateMachine 问题
+### 1.1 整体架构图
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           前端 (Vue 3)                                   │
+│   Dashboard.vue │ GameMap.vue │ AgentStatus.vue │ LogStream.vue          │
+└─────────────────────────────────┬───────────────────────────────────────┘
+                                  │ HTTP / WebSocket
+┌─────────────────────────────────┴───────────────────────────────────────┐
+│                        Backend (Spring Boot)                             │
+│  ┌─────────────────────────────────────────────────────────────────┐    │
+│  │                      Controller Layer                            │    │
+│  │  SandboxController │ GodController │ 其他REST接口               │    │
+│  └─────────────────────────────────┬───────────────────────────────┘    │
+│                                    │                                    │
+│  ┌─────────────────────────────────┴───────────────────────────────┐    │
+│  │                      Service Layer                               │    │
+│  │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐       │    │
+│  │  │ SandboxStateMachine │  RuleEngine   │  GodModeService│       │    │
+│  │  │  (责任链模式)  │  │  (策略模式)   │  │               │       │    │
+│  │  └────────────────┘  └────────────────┘  └────────────────┘       │    │
+│  │  ┌────────────────┐  ┌────────────────┐  ┌────────────────┐       │    │
+│  │  │SimulationScheduler │ PersonalityService │ WebSocketPushService │    │
+│  │  └────────────────┘  └────────────────┘  └────────────────┘       │    │
+│  └─────────────────────────────────┬───────────────────────────────┘    │
+│                                    │                                    │
+│  ┌─────────────────────────────────┴───────────────────────────────┐    │
+│  │                      Model Layer                                   │    │
+│  │  Agent │ GameState │ ActionLog │ Vote │ GameConstants            │    │
+│  └───────────────────────────────────────────────────────────────────┘    │
+└─────────────────────────────────┬───────────────────────────────────────┘
+                                  │ REST API
+┌─────────────────────────────────┴───────────────────────────────────────┐
+│                      Agent服务 (Python FastAPI)                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                    │
+│  │ /decide     │  │ /judge      │  │ /health      │                    │
+│  └──────┬───────┘  └──────────────┘  └──────────────┘                    │
+│         │                                                              │
+│  ┌──────┴──────────────────────────────────────────────────────┐      │
+│  │                 AI决策层 (MiniMax API)                       │      │
+│  │  AgentScheduler │ MiniMaxClient │ RateLimiter               │      │
+│  └───────────────────────────────────────────────────────────────┘      │
+└─────────────────────────────────────────────────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        数据层 (MySQL)                                    │
+│  agents │ game_states │ action_logs │ votes                            │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 二、设计模式应用
+
+### 2.1 策略模式 (Strategy Pattern) - RuleEngine
+
+**目标**：解耦动作逻辑，实现动作的可插拔
+
+**应用前问题**：
+- RuleEngine 包含 10+ 种动作的执行逻辑
+- 添加新动作需要修改核心类
+- 难以单独测试每个动作
+
+**应用后架构**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      ActionStrategy                          │
+│                   (策略接口)                                  │
+│  + execute(Agent, String): ActionResult                      │
+│  + getActionName(): String                                  │
+│  + canExecute(Agent): boolean                               │
+└─────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│ MoveAction    │  │  EatAction   │  │  RestAction  │
+│ Strategy      │  │  Strategy    │  │  Strategy    │
+└───────────────┘  └───────────────┘  └───────────────┘
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│ TalkAction    │  │  TradeAction  │  │ ProvokeAction│
+│ Strategy      │  │  Strategy    │  │  Strategy    │
+└───────────────┘  └───────────────┘  └───────────────┘
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│ClaimFoodAction│  │PickupFoodAction│  │ StealAction  │
+│ Strategy      │  │  Strategy    │  │  Strategy    │
+└───────────────┘  └───────────────┘  └───────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                   ActionStrategyFactory                      │
+│  (工厂类 - 自动收集所有 @Component 策略)                    │
+│  + getStrategy(actionName): ActionStrategy                   │
+│  + execute(actionName, Agent, target): ActionResult        │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**核心代码**：
 
 ```java
-// 当前：executeTick() 方法承担多个职责
-public void executeTick() {
-    // 职责1：被动消耗处理
-    // 职责2：复活倒计时处理
-    // 职责3：Python调度器调用
-    // 职责4：游戏状态保存
+// 1. 策略接口
+public interface ActionStrategy {
+    ActionResult execute(Agent agent, String target);
+    String getActionName();
+}
+
+// 2. 具体策略实现
+@Component
+@Slf4j
+public class MoveActionStrategy implements ActionStrategy {
+    @Override
+    public ActionResult execute(Agent agent, String target) {
+        // 移动逻辑...
+        return ActionResult.success("移动成功");
+    }
+    
+    @Override
+    public String getActionName() {
+        return "move";
+    }
+}
+
+// 3. 工厂自动收集
+@Component
+@Slf4j
+public class ActionStrategyFactory {
+    private final Map<String, ActionStrategy> strategies;
+    
+    public ActionStrategyFactory(List<ActionStrategy> strategyList) {
+        this.strategies = strategyList.stream()
+            .collect(Collectors.toMap(
+                s -> s.getActionName().toLowerCase(),
+                Function.identity()
+            ));
+    }
+}
+
+// 4. RuleEngine 极简化
+@Service
+@Slf4j
+public class RuleEngine {
+    private final ActionStrategyFactory actionStrategyFactory;
+    
+    public ActionResult validateAndExecute(Agent agent, String action, String target) {
+        // 校验死亡、白名单等...
+        ActionStrategy strategy = actionStrategyFactory.getStrategy(action);
+        return strategy.execute(agent, target);
+    }
 }
 ```
 
-**问题**：
-- 违反单一职责原则（SRP）
+**优势**：
+- ✅ 每个动作独立，易于测试
+- ✅ 添加新动作只需新增策略类
+- ✅ 工厂自动注册，无需修改现有代码
+- ✅ RuleEngine 代码量从 388 行减少到 60 行
+
+---
+
+### 2.2 责任链模式 (Chain of Responsibility) - SandboxStateMachine
+
+**目标**：解耦 Tick 结算流程，实现阶段的可插拔
+
+**应用前问题**：
+- executeTick() 包含 6 个阶段
 - 难以单独测试某个阶段
 - 添加新阶段需要修改核心类
-- 代码耦合度高
 
-### 1.2 RuleEngine 问题
-
-```java
-// 当前：所有数值计算在一个类中
-public class RuleEngine {
-    executeMove() {...}
-    executeEat() {...}
-    executeRest() {...}
-    // 未来可能添加：executeSteal(), executeVote()...
-}
-```
-
-**问题**：
-- 类职责过多
-- 新增动作需要修改核心类
-- 难以实现动作的可插拔
-
-### 1.3 WebSocket 推送问题
-
-```java
-// 当前：状态变化直接推送
-public void executeTick() {
-    // 计算状态
-    // 立即推送
-    webSocketService.push(state);
-}
-```
-
-**问题**：
-- 推送逻辑耦合在业务逻辑中
-- 难以控制推送时机和内容
-- 难以添加新的观察者
-
----
-
-## 二、设计模式建议
-
-### 2.1 单例模式（Singleton）- 最简单，必须
-
-**应用场景**：全局唯一实例
-
-```java
-// 建议应用
-public class RuleEngine {
-    private static RuleEngine instance;
-
-    public static RuleEngine getInstance() {
-        if (instance == null) {
-            instance = new RuleEngine();
-        }
-        return instance;
-    }
-}
-
-// Spring Boot 中更简单的写法
-@Service
-public class RuleEngine {
-    // Spring 自动管理为单例
-}
-```
-
-**当前应用**：
-| 类 | 是否单例 | 建议 |
-|----|----------|------|
-| RuleEngine | 否 | ✅ 改为单例 |
-| PythonDispatcher | 否 | ✅ 改为单例 |
-| GameStateRepository | 是 | 保持现状 |
-| AgentRepository | 是 | 保持现状 |
-
----
-
-### 2.2 责任链模式（Chain of Responsibility）- 优化状态机
-
-**应用场景**：Tick结算的4个阶段
-
-```
-原始设计：
-┌─────────────────────────────────────────┐
-│  SandboxStateMachine.executeTick()      │
-│  ├── 被动消耗                           │
-│  ├── 复活处理                           │
-│  ├── Python调度                         │
-│  └── 状态保存                           │
-└─────────────────────────────────────────┘
-
-优化后：
-┌─────────────┐
-│   Handler   │ (接口)
-└──────┬──────┘
-       │
-       ├──┌────────────────────┐
-       │  │ PassiveConsumeHandler │ ──▶ 被动消耗
-       ├──├────────────────────┤
-       │  │ RespawnHandler       │ ──▶ 复活处理
-       ├──├────────────────────┤
-       │  │ PythonDispatchHandler │ ──▶ Python调度
-       └──┴────────────────────┘
-              │
-              ▼
-       ┌─────────────┐
-       │  NextHandler │ ──▶ 状态保存
-       └─────────────┘
-```
-
-**代码示例**：
-
-```java
-public interface TickPhaseHandler {
-    void handle(GameState state, List<Agent> agents);
-
-    default TickPhaseHandler setNext(TickPhaseHandler next) {
-        return (s, a) -> {
-            this.handle(s, a);
-            next.handle(s, a);
-        };
-    }
-}
-
-// 实现类
-@Component
-public class PassiveConsumptionHandler implements TickPhaseHandler {
-    @Override
-    public void handle(GameState state, List<Agent> agents) {
-        // 被动消耗逻辑
-    }
-}
-
-@Component
-public class RespawnHandler implements TickPhaseHandler {
-    @Override
-    public void handle(GameState state, List<Agent> agents) {
-        // 复活逻辑
-    }
-}
-
-// 使用
-@Service
-public class TickExecutor {
-    private final List<TickPhaseHandler> handlers;
-
-    public void execute(GameState state) {
-        for (TickPhaseHandler handler : handlers) {
-            handler.handle(state, agents);
-        }
-    }
-}
-```
-
-**优势**：
-- 每个阶段独立，可单独测试
-- 添加新阶段只需新增Handler
-- 可动态调整执行顺序
-
----
-
-### 2.3 策略模式（Strategy）- 数值计算
-
-**应用场景**：饥饿惩罚、Buff计算、投票计算
-
-```
-原始设计：
-┌─────────────────────┐
-│   RuleEngine        │
-│   calculatePenalty() │ ← 多个if-else
-│   calculateBuff()    │
-└─────────────────────┘
-
-优化后：
-┌─────────────────────┐
-│   PenaltyStrategy   │ (接口)
-└──────────┬──────────┘
-           │
-     ┌─────┴─────┐
-     ▼           ▼
-┌─────────┐ ┌─────────┐
-│ Normal  │ │ Aggres │  ← 不同阵营可用不同策略
-│Strategy │ │ sStrategy│
-└─────────┘ └─────────┘
-```
-
-**代码示例**：
-
-```java
-public interface PenaltyStrategy {
-    double calculateStaminaCost(double baseCost, Agent agent);
-    double calculateSatietyCost(double baseCost, Agent agent);
-    int calculateHealthDamage(Agent agent);
-}
-
-@Component
-public class DefaultPenaltyStrategy implements PenaltyStrategy {
-    @Override
-    public double calculateStaminaCost(double baseCost, Agent agent) {
-        double multiplier = 1.0;
-        if (agent.isFatigued()) multiplier *= 1.5;
-        if (agent.isHungry()) multiplier *= 1.5;
-        return baseCost * multiplier;
-    }
-}
-
-@Service
-public class RuleEngine {
-    private final Map<String, PenaltyStrategy> strategies;
-
-    public double getStaminaCost(Agent agent) {
-        PenaltyStrategy strategy = strategies.getOrDefault(
-            agent.getFaction(),
-            new DefaultPenaltyStrategy()
-        );
-        return strategy.calculateStaminaCost(BASE_COST, agent);
-    }
-}
-```
-
-**优势**：
-- 不同阵营可用不同数值策略
-- 便于调整游戏平衡
-- 便于添加新的计算规则
-
----
-
-### 2.4 观察者模式（Observer）- WebSocket推送
-
-**应用场景**：状态变化通知
-
-```
-┌─────────────────┐
-│   GameSubject   │ (被观察者)
-│   - agents      │
-│   - gameState   │
-└────────┬────────┘
-         │ notify()
-         │
-    ┌────┴────┐
-    ▼         ▼
-┌────────┐ ┌────────┐
-│WebSocket│ │  Log   │  ← 多个观察者
-│Observer │ │Observer │
-└────────┘ └────────┘
-```
-
-**代码示例**：
-
-```java
-public interface GameObserver {
-    void onTickComplete(GameState state, List<Agent> agents);
-    void onAgentAction(Agent agent, String action);
-    void onGameEnd(GameResult result);
-}
-
-@Component
-public class WebSocketObserver implements GameObserver {
-    @Override
-    public void onTickComplete(GameState state, List<Agent> agents) {
-        // 推送更新到前端
-        webSocketService.broadcast(state);
-    }
-}
-
-@Service
-public class GameNotifier {
-    private final List<GameObserver> observers = new CopyOnWriteArrayList<>();
-
-    public void addObserver(GameObserver observer) {
-        observers.add(observer);
-    }
-
-    public void notifyTickComplete(GameState state, List<Agent> agents) {
-        for (GameObserver observer : observers) {
-            observer.onTickComplete(state, agents);
-        }
-    }
-}
-```
-
-**优势**：
-- 推送逻辑与业务逻辑解耦
-- 可添加多个观察者（WebSocket、Log、Metrics）
-- 便于控制推送内容
-
----
-
-### 2.5 命令模式（Command）- Agent动作
-
-**应用场景**：Agent动作执行、撤销、重做
-
-```
-┌─────────────────┐
-│   Command       │ (接口)
-│   execute()     │
-│   undo()        │
-└────────┬────────┘
-         │
-    ┌────┴────┐
-    ▼         ▼
-┌────────┐ ┌────────┐
-│  Move  │ │  Eat   │  ← 每个动作一个命令
-│Command │ │Command │
-└────────┘ └────────┘
-```
-
-**代码示例**：
-
-```java
-public interface AgentCommand {
-    void execute(Agent agent);
-    void undo(Agent agent);
-    boolean canExecute(Agent agent);
-}
-
-@Component
-public class MoveCommand implements AgentCommand {
-    private final String targetNode;
-
-    public MoveCommand(String targetNode) {
-        this.targetNode = targetNode;
-    }
-
-    @Override
-    public void execute(Agent agent) {
-        agent.setCurrentNode(targetNode);
-    }
-
-    @Override
-    public void undo(Agent agent) {
-        agent.setCurrentNode(previousNode); // 需要记录之前位置
-    }
-
-    @Override
-    public boolean canExecute(Agent agent) {
-        return ruleEngine.validateMove(agent, targetNode).isSuccess();
-    }
-}
-
-@Service
-public class CommandExecutor {
-    private final Stack<AgentCommand> history = new Stack<>();
-
-    public void execute(AgentCommand command, Agent agent) {
-        if (command.canExecute(agent)) {
-            command.execute(agent);
-            history.push(command);
-        }
-    }
-
-    public void undo() {
-        if (!history.isEmpty()) {
-            AgentCommand command = history.pop();
-            command.undo();
-        }
-    }
-}
-```
-
-**优势**：
-- 动作可撤销
-- 便于实现动作日志
-- 便于实现"回放"功能
-
----
-
-## 三、架构升级建议
-
-### 3.1 分层架构
+**应用后架构**：
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Presentation Layer                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
-│  │   Vue3     │  │  WebSocket  │  │  REST API   │       │
-│  │  Frontend  │  │   Observer   │  │   (God)     │       │
-│  └─────────────┘  └─────────────┘  └─────────────┘       │
+│                        TickPhase                            │
+│                   (阶段接口)                                  │
+│  + execute(GameState, tick): void                          │
+│  + getOrder(): int                                          │
+│  + getName(): String                                        │
+└─────────────────────────────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│PassiveConsump│  │ OrderSwordSpawn│  │   Respawn     │
+│tionPhase     │  │ Phase         │  │   Phase       │
+│ order = 1     │  │ order = 2     │  │ order = 3     │
+└───────────────┘  └───────────────┘  └───────────────┘
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐  ┌───────────────┐  ┌───────────────┐
+│ PeaceEnding   │  │   Airdrop     │  │   (未来扩展)  │
+│ Phase         │  │   Phase       │  │               │
+│ order = 4     │  │ order = 5     │  │               │
+└───────────────┘  └───────────────┘  └───────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                SandboxStateMachine                          │
+│  (状态机 - 自动收集并执行所有 Phase)                          │
+│  + executeTick(): void                                      │
+│    → 按 order 排序执行所有 TickPhase                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**核心代码**：
+
+```java
+// 1. 阶段接口
+public interface TickPhase {
+    void execute(GameState gameState, int tick);
+    int getOrder();
+    String getName();
+}
+
+// 2. 具体阶段实现
+@Component
+@Slf4j
+public class PassiveConsumptionPhase implements TickPhase {
+    @Override
+    @Transactional
+    public void execute(GameState gameState, int tick) {
+        List<Agent> aliveAgents = agentRepository.findByAliveTrue();
+        for (Agent agent : aliveAgents) {
+            applyPassiveConsumption(agent, tick);
+        }
+        agentRepository.saveAll(aliveAgents);
+    }
+    
+    @Override
+    public int getOrder() { return 1; }
+    @Override
+    public String getName() { return "passiveConsumption"; }
+}
+
+// 3. SandboxStateMachine 自动执行
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class SandboxStateMachine {
+    private final List<TickPhase> tickPhases;  // Spring 自动注入
+    
+    @Transactional
+    public void executeTick() {
+        GameState gameState = getOrCreateGameState();
+        int tick = gameState.getCurrentTick() + 1;
+        
+        tickPhases.stream()
+            .sorted(Comparator.comparingInt(TickPhase::getOrder))
+            .forEach(phase -> phase.execute(gameState, tick));
+        
+        gameStateRepository.save(gameState);
+    }
+}
+```
+
+**优势**：
+- ✅ 每个阶段独立，易于测试
+- ✅ 添加新阶段只需新增 Phase 类
+- ✅ 可以动态调整执行顺序
+- ✅ 事务边界更清晰（每个阶段可独立 @Transactional）
+
+---
+
+### 2.3 服务层分离 (GodModeService)
+
+**目标**：将上帝命令的业务逻辑从 Controller 分离
+
+**应用前问题**：
+- GodController 包含业务逻辑
+- plague 接口空实现
+- 难以测试
+
+**应用后架构**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    GodController                            │
+│  (只负责 HTTP 请求处理)                                      │
+│  + airdrop() → 调用 GodModeService                          │
+│  + plague() → 调用 GodModeService                           │
+│  + amnesty() → 调用 GodModeService                          │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Service Layer                          │
-│  ┌─────────────────┐  ┌─────────────────┐                 │
-│  │ SandboxStateMachine │  │   RuleEngine   │                 │
-│  │  (责任链模式)    │  │  (策略模式)      │                 │
-│  └─────────────────┘  └─────────────────┘                 │
-│  ┌─────────────────┐  ┌─────────────────┐                 │
-│  │ PythonDispatcher │  │   GameNotifier  │                 │
-│  │  (异步调度)      │  │  (观察者模式)    │                 │
-│  └─────────────────┘  └─────────────────┘                 │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                       Data Layer                            │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐       │
-│  │  MySQL      │  │   Redis     │  │   Kafka     │       │
-│  │ (持久化)    │  │  (缓存)     │  │ (消息队列)   │       │
-│  └─────────────┘  └─────────────┘  └─────────────┘       │
+│                    GodModeService                           │
+│  (业务逻辑层)                                               │
+│  + airdropSupplies(node, amount): int                     │
+│  + applyPlague(faction, penalty): int                      │
+│  + grantAmnesty(agentName): int                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 3.2 消息队列设计（可选）
-
-用于解耦Java和Python的通信：
-
-```
-┌──────────┐    ┌──────────┐    ┌──────────┐
-│   Java   │───▶│  Kafka   │───▶│  Python  │
-│  Spring  │    │  (队列)   │    │  FastAPI │
-└──────────┘    └──────────┘    └──────────┘
-                     │
-                     ▼
-              ┌──────────┐
-              │  Dead    │  ← 死信队列
-              │  Letter  │    (处理失败消息)
-              └──────────┘
-```
-
-### 3.3 死信队列（Dead Letter Queue）
-
-用于处理失败的API请求：
-
-```yaml
-# Kafka DLQ 配置示例
-deadLetterQueue:
-  topic: agent-decision-dlq
-  maxRetries: 3
-  retryDelay: 5s
-  onFailure: manual-intervention
-```
-
-**处理流程**：
-1. Python调用MiniMax API失败
-2. 进入重试队列
-3. 重试3次仍失败
-4. 进入死信队列
-5. 触发人工干预告警
-
 ---
 
-## 四、扩展性设计
+## 三、模块详细说明
 
-### 4.1 新增阵营
+### 3.1 后端模块结构
 
-```java
-// 配置化阵营
-public class FactionConfig {
-    String name;           // 阵营名
-    String baseNode;       // 基地节点
-    String primaryColor;    // 颜色
-    PenaltyStrategy penaltyStrategy;  // 惩罚策略
-}
-
-// 配置文件
-faction:
-  - name: lawful
-    baseNode: base_lawful
-    penaltyStrategy: default
-
-  - name: aggressive
-    baseNode: base_aggressive
-    penaltyStrategy: aggressive
-
-  - name: neutral
-    baseNode: base_neutral
-    penaltyStrategy: default
+```
+backend/src/main/java/com/guardianeye/iiot/
+├── controller/                      # 控制层
+│   ├── SandboxController.java      # 沙盒主控制器
+│   └── GodController.java          # 上帝控制器
+│
+├── service/                        # 服务层
+│   ├── SandboxStateMachine.java    # 游戏状态机 (责任链)
+│   ├── RuleEngine.java             # 规则引擎 (策略)
+│   ├── GodModeService.java         # 上帝模式服务
+│   ├── PersonalityService.java    # 性格分配服务
+│   ├── SimulationScheduler.java   # 模拟调度器
+│   └── ActionResult.java           # 动作结果 (统一返回)
+│   │
+│   ├── action/                     # 动作策略 (策略模式)
+│   │   ├── ActionStrategy.java             # 策略接口
+│   │   ├── ActionStrategyFactory.java      # 策略工厂
+│   │   ├── MoveActionStrategy.java         # 移动
+│   │   ├── EatActionStrategy.java          # 进食
+│   │   ├── RestActionStrategy.java         # 休息
+│   │   ├── TalkActionStrategy.java         # 发言
+│   │   ├── TradeActionStrategy.java        # 交易
+│   │   ├── ProvokeActionStrategy.java     # 挑衅
+│   │   ├── ClaimFoodActionStrategy.java    # 领食物
+│   │   ├── PickupFoodActionStrategy.java  # 捡食物
+│   │   └── StealActionStrategy.java       # 偷窃
+│   │
+│   └── tick/                       # Tick阶段 (责任链)
+│       ├── TickPhase.java                  # 阶段接口
+│       ├── PassiveConsumptionPhase.java     # 被动消耗
+│       ├── OrderSwordSpawnPhase.java       # 秩序之剑生成
+│       ├── RespawnPhase.java               # 复活
+│       ├── PeaceEndingPhase.java           # 和平结局
+│       └── AirdropPhase.java               # 空投
+│
+├── model/                          # 实体层
+│   ├── Agent.java                 # Agent实体
+│   ├── GameState.java             # 游戏状态
+│   ├── GameConstants.java         # 游戏常量
+│   ├── ActionLog.java            # 动作日志
+│   └── ...
+│
+└── observer/                       # 观察者模式
+    ├── GameObserver.java          # 观察者接口
+    ├── WebSocketObserver.java     # WebSocket推送
+    └── DatabaseObserver.java      # 数据库观察
 ```
 
-### 4.2 新增动作
+### 3.2 Agent服务模块结构
 
-```java
-// 命令模式支持新动作
-public interface AgentCommand {
-    String getName();
-    boolean canExecute(Agent agent);
-    void execute(Agent agent);
-}
-
-// 新增动作只需实现接口
-@Component
-public class StealCommand implements AgentCommand {
-    @Override
-    public String getName() { return "steal"; }
-    // ...
-}
 ```
-
-### 4.3 新增结局
-
-```java
-// 策略模式支持新结局
-public interface EndingStrategy {
-    boolean checkCondition();
-    String getName();
-    void execute();
-}
-
-@Component
-public class PeaceEnding implements EndingStrategy {
-    @Override
-    public boolean checkCondition() {
-        return allFactionsAlive() &&
-               hasOrderSword() &&
-               declarationApproved();
-    }
-}
+agent/
+├── main.py                         # FastAPI 入口
+├── routers/                        # API路由
+│   ├── decide.py                   # Agent决策
+│   ├── judge.py                    # AI判官
+│   └── health.py                  # 健康检查
+├── services/                       # 服务层
+│   ├── agent_scheduler.py          # Agent调度
+│   ├── minimax_client.py           # MiniMax API调用
+│   ├── rate_limiter.py             # 限流器
+│   └── memory_manager.py           # 记忆管理
+├── graphs/                         # LangGraph图
+│   ├── leader_graph.py             # 领袖图
+│   ├── soldier_graph.py            # 士兵图
+│   └── judge_graph.py              # 判官图
+├── prompts/                        # 提示词
+│   ├── leader_prompt.py
+│   ├── soldier_prompt.py
+│   └── judge_prompt.py
+└── tools/                          # 工具函数
+    └── action_tools.py
 ```
 
 ---
 
-## 五、优先级建议
+## 四、数据流
 
-| 模式 | 优先级 | 工作量 | 收益 |
-|------|--------|--------|------|
-| 单例模式 | P0 | 低 | 确保全局唯一 |
-| 观察者模式 | P1 | 中 | 解耦推送逻辑 |
-| 责任链模式 | P1 | 中 | 解耦Tick阶段 |
-| 策略模式 | P2 | 中 | 灵活计算规则 |
-| 命令模式 | P2 | 高 | 动作可撤销 |
+### 4.1 Agent决策流程
 
-**建议实施顺序**：
-1. **Phase 2.1**：单例 + 观察者模式
-2. **Phase 2.2**：责任链模式（Tick阶段）
-3. **Phase 2.3**：策略模式（数值计算）
+```
+Java Backend                      Python Agent
+     │                                 │
+     │  POST /api/agents/{id}/action   │
+     │  {action: "move", target: "D"} │
+     │ ───────────────────────────────►│
+     │                                 │
+     │                           RuleEngine.validateAndExecute()
+     │                           ActionStrategyFactory.getStrategy("move")
+     │                           MoveActionStrategy.execute()
+     │                                 │
+     │  {success: true, message: "..."}│
+     │ ◄───────────────────────────────│
+     │                                 │
+     │  Agent状态更新                   │
+     │  秩序之剑跟随检查                 │
+     │  日志记录                       │
+```
+
+### 4.2 Tick结算流程
+
+```
+SimulationScheduler
+         │
+         ▼
+SandboxStateMachine.executeTick()
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  阶段1: PassiveConsumptionPhase     │
+│  - 禁闭检查                         │
+│  - 被动消耗（耐力、饱食度）         │
+│  - 饥饿扣血                         │
+│  - 健康回复                         │
+│  - 死亡处理                         │
+└─────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  阶段2: OrderSwordSpawnPhase        │
+│  - 第40回合生成秩序之剑             │
+└─────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  阶段3: RespawnPhase                │
+│  - 复活倒计时                       │
+│  - 复活处理                         │
+└─────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  阶段4: PeaceEndingPhase            │
+│  - 和平结局条件检查                 │
+└─────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────┐
+│  阶段5: AirdropPhase                │
+│  - 每11轮空投物资                   │
+└─────────────────────────────────────┘
+         │
+         ▼
+     游戏状态保存
+```
 
 ---
 
-## 六、风险与注意事项
+## 五、关键设计决策
 
-### 6.1 过度设计风险
+### 5.1 为什么选择这些设计模式？
 
-```
-警告：不要为了设计模式而设计模式！
+| 设计模式 | 适用场景 | 收益 |
+|---------|---------|------|
+| 策略模式 | 动作执行逻辑 | 解耦、易扩展、易测试 |
+| 责任链模式 | Tick阶段串联 | 阶段独立、可排序、易扩展 |
+| 工厂模式 | 策略自动注册 | 自动收集、无需配置 |
+| 观察者模式 | 状态变更通知 | 解耦推送逻辑 |
 
-检查清单：
-□ 这个模式解决了什么问题？
-□ 不使用这个模式会有多糟糕？
-□ 团队是否熟悉这个模式？
-□ 未来是否真的会扩展？
-```
+### 5.2 事务管理策略
 
-### 6.2 性能考虑
+- **每个 TickPhase** 可独立设置 `@Transactional`
+- **RuleEngine** 本身无事务，动作事务在 Controller 层管理
+- **GodModeService** 设置 `@Transactional` 确保数据一致性
 
-| 模式 | 性能影响 | 注意事项 |
-|------|----------|----------|
-| 责任链 | 轻微 | 链不长时影响可忽略 |
-| 策略 | 无 | 运行时多态调用 |
-| 观察者 | 轻微 | 观察者不宜过多 |
-| 命令 | 轻微 | 历史栈不宜过大 |
+### 5.3 依赖注入策略
 
----
-
-## 七、总结
-
-### 设计模式应用总结
-
-| 模式 | 核心价值 | 适用场景 |
-|------|----------|----------|
-| 单例 | 全局唯一 | 全局服务类 |
-| 责任链 | 解耦串联 | Tick阶段、过滤器 |
-| 策略 | 算法替换 | 数值计算、惩罚规则 |
-| 观察者 | 解耦通知 | WebSocket、日志 |
-| 命令 | 操作封装 | Agent动作 |
-
-### 核心理念
-
-```
-1. 保持简单：KISS原则
-2. 不要过度设计：YAGNI原则
-3. 优先组合：优先使用组合而非继承
-4. 面向接口：依赖抽象而非具体
-```
+- 使用 `@RequiredArgsConstructor` + `final` 实现构造器注入
+- Spring 自动收集 `List<T>` 注入（策略工厂、阶段链）
+- 避免循环依赖：RuleEngine 不依赖 Repository，只通过策略类访问
 
 ---
 
-*文档版本：1.0*
-*最后更新：2026-04-16*
-*作者：AI Assistant*
-*用途：架构设计参考，非强制要求*
+## 六、扩展指南
+
+### 6.1 添加新动作
+
+1. 创建 `XxxActionStrategy implements ActionStrategy`
+2. 标注 `@Component`
+3. 实现 `getActionName()` 返回动作名
+4. 工厂自动注册，无需其他修改
+
+### 6.2 添加新Tick阶段
+
+1. 创建 `XxxPhase implements TickPhase`
+2. 标注 `@Component`
+3. 设置 `getOrder()` 返回执行顺序
+4. 自动纳入执行链
+
+### 6.3 添加新上帝命令
+
+1. 在 `GodModeService` 添加新方法
+2. 在 `GodController` 添加新端点
+
+---
+
+## 七、版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|----------|
+| v2.1 | 2026-05-17 | 策略模式 + 责任链模式完整实现 |
+| v2.0 | 2026-05-16 | Phase 5.5 架构升级规划 |
+| v1.2 | 2026-05-06 | Phase 4 资源博弈系统 |
+| v1.0 | 2026-04-16 | 初始版本 |
+
+---
+
+*文档版本：2.1*
+*最后更新：2026-05-17*
+*更新内容：*
+* - 策略模式完整实现（ActionStrategy + Factory）*
+* - 责任链模式完整实现（TickPhase）*
+* - GodModeService 服务层分离*
+* - 模块结构详细说明*
